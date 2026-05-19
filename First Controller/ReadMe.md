@@ -102,30 +102,9 @@ The controller has 3 important functions:
 
 ---
 
-# Constructor
-
-```cpp
-Ur5Manipulation::Ur5Manipulation(...)
-```
-
-Runs once when the controller starts.
-
-It:
-
-- adds constraints
-- creates tasks
-- adds tasks to solver
-- configures stiffness and weight
-
----
-
 # Tasks
 
 ## PostureTask
-
-```cpp
-postureTask
-```
 
 Purpose:
 
@@ -136,50 +115,9 @@ Purpose:
 
 ## EndEffectorTask
 
-```cpp
-eeTask_
-```
-
 Purpose:
 
 - moves `tool0` to a target pose
-
----
-
-# Stiffness and Weight
-
-Example:
-
-```cpp
-eeTask_->stiffness(5.0);
-eeTask_->weight(100.0);
-```
-
----
-
-## Stiffness
-
-Controls how aggressively the robot moves.
-
-Low stiffness:
-- smooth
-- slow
-
-High stiffness:
-- faster
-- more aggressive
-
----
-
-## Weight
-
-Controls task priority inside the solver.
-
-High weight:
-- task becomes more important
-
-Low weight:
-- other tasks dominate
 
 ---
 
@@ -227,14 +165,6 @@ The robot starts moving toward the waypoint.
 
 ---
 
-# run()
-
-Runs continuously during controller execution.
-
-Typically:
-- 200 Hz
-- 500 Hz
-- 1000 Hz
 
 Inside:
 
@@ -275,17 +205,6 @@ IDLE
 
 ---
 
-# Error Computation
-
-```cpp
-double error = eeTask_->eval().norm();
-```
-
-Measures the distance between:
-- current pose
-- target pose
-
----
 
 # Transition Condition
 
