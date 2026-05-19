@@ -218,39 +218,6 @@ If the error becomes small enough:
 
 ---
 
-# WAYPOINT State
-
-Robot moves toward waypoint.
-
-When reached:
-
-```cpp
-eeTask_->set_ef_pose(homePose_);
-```
-
-The controller sends the robot back HOME.
-
----
-
-# GO_HOME State
-
-Robot returns to initial pose.
-
-When HOME is reached:
-- controller enters IDLE
-
----
-
-# IDLE State
-
-Robot keeps current pose stabilized.
-
-No new target is sent.
-
----
-
-
-
 # Example Motion
 
 ```text
