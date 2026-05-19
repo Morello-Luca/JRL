@@ -330,45 +330,7 @@ No new target is sent.
 
 ---
 
-# Solver
 
-The solver computes robot motion.
-
-It combines:
-- posture task
-- end-effector task
-- constraints
-
-Then computes the required joint motion.
-
----
-
-# Current Features
-
-Current project demonstrates:
-
-- Cartesian control
-- End-effector motion
-- State machine logic
-- mc_rtc task control
-- UR5 waypoint motion
-
----
-
-# Future Improvements
-
-Possible future extensions:
-
-- FSM controller
-- ROS integration
-- GUI controls
-- Multiple waypoints
-- Gripper control
-- Trajectory generation
-- Obstacle avoidance
-- Force control
-
----
 
 # Example Motion
 
@@ -382,14 +344,4 @@ Return Home
 IDLE
 ```
 
----
 
-# Technologies Used
-
-- mc_rtc
-- Eigen
-- SpaceVecAlg (sva)
-- C++
-- UR5 robot model
-
----
