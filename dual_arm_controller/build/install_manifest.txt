@@ -1,0 +1,2 @@
+/home/vscode/workspace/install/lib/mc_controller/etc/DualArmControl.yaml
+/home/vscode/workspace/install/lib/mc_controller/DualArmControl.so

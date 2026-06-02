@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/vscode/workspace/sandbox/controllers/dual_arm_controller/build/cmake_install.cmake",
+		"/home/vscode/workspace/sandbox/controllers/dual_arm_controller/build/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
