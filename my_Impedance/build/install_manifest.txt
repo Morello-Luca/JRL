@@ -1,0 +1,2 @@
+/home/vscode/workspace/install/lib/mc_controller/etc/Test.yaml
+/home/vscode/workspace/install/lib/mc_controller/Test.so
