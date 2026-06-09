@@ -1199,11 +1199,10 @@ src/CMakeFiles/DualArmControl.dir/DualArmControl.cpp.o: \
  /home/vscode/workspace/install/include/tvm/task_dynamics/ProportionalDerivative.h \
  /home/vscode/workspace/install/include/mc_tasks/PositionTask.h \
  /home/vscode/workspace/install/include/mc_tvm/PositionFunction.h \
- /home/vscode/workspace/install/include/mc_tasks/TransformTask.h \
  /home/vscode/workspace/install/include/mc_tasks/ImpedanceTask.h \
  /home/vscode/workspace/install/include/mc_tasks/ImpedanceGains.h \
+ /home/vscode/workspace/install/include/mc_tasks/TransformTask.h \
  /home/vscode/workspace/install/include/mc_filter/LowPass.h \
- /home/vscode/workspace/sandbox/controllers/dual_arm_controller/src/api.h \
  /home/vscode/workspace/install/include/mc_rbdyn/RobotLoader.h \
  /home/vscode/workspace/install/include/mc_rtc/io_utils.h \
  /home/vscode/workspace/install/include/mc_rtc/config.h \
