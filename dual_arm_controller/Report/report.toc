@@ -1,0 +1,12 @@
+\babel@toc {italian}{}\relax 
+\babel@toc {italian}{}\relax 
+\contentsline {section}{\numberline {1}Introduzione}{2}{section.1}%
+\contentsline {section}{\numberline {2}Architettura e Struttura del Codice C++}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Pattern FSM a Doppio Puntatore}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Pre-allocazione e Zero Memory Jitter}{2}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Analisi di Efficienza e Complessità Computazionale}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Analisi Algoritmica del Codice (Code Rate)}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Tabella Comparativa delle Prestazioni}{3}{subsection.3.2}%
+\contentsline {section}{\numberline {4}Documentazione del Controllore}{3}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Flusso di Esecuzione della FSM}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Guida per l'Aggiunta di un Nuovo Stato}{4}{subsection.4.2}%

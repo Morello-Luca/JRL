@@ -1,2 +1,0 @@
-/home/vscode/workspace/install/lib/mc_controller/etc/Ur5Manipulation.yaml
-/home/vscode/workspace/install/lib/mc_controller/Ur5Manipulation.so

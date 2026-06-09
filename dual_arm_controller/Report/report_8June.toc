@@ -1,0 +1,9 @@
+\babel@toc {italian}{}\relax 
+\babel@toc {italian}{}\relax 
+\contentsline {section}{\numberline {1}Introduzione}{2}{section.1}%
+\contentsline {section}{\numberline {2}Architettura e Struttura del Codice C++}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Pattern FSM a Doppio Puntatore}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Pre-allocazione e Azzeramento del Real-Time Jitter}{2}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Documentazione del Controllore}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Flusso di Esecuzione della FSM}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Guida per l'Aggiunta di un Nuovo Stato}{3}{subsection.3.2}%

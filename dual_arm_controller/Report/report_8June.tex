@@ -1,0 +1,154 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+
+% Configurazione pulita e sicura per il codice C++
+\definecolor{commentcolor}{rgb}{0.12, 0.53, 0.53}
+\definecolor{keywordcolor}{rgb}{0.0, 0.0, 0.8}
+\definecolor{stringcolor}{rgb}{0.63, 0.08, 0.08}
+\definecolor{backgroundcolor}{rgb}{0.97, 0.97, 0.97}
+
+\lstset{
+    language=C++,
+    backgroundcolor=\color{backgroundcolor},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{keywordcolor}\bfseries,
+    commentstyle=\color{commentcolor}\itshape,
+    stringstyle=\color{stringcolor},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=8pt,
+    frame=single,
+    breaklines=true,
+    tabsize=2,
+    showstringspaces=false,
+    extendedchars=true,
+    literate={->*}{{\texttt{->*}}}3 {.*}{{\texttt{.*}}}2
+}
+
+
+\geometry{margin=2.5cm}
+
+% FIX: Rimossa la graffa in eccesso che rompeva il preambolo
+\title{\textbf{Report Tecnico: Architettura Real-Time Dual-Arm Control}\\ \large Ottimizzazione FSM tramite Funzioni Membro e Analisi di Complessità}
+\author{Sviluppo Software di Controllo Robotico}
+\date{Giugno 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% =========================================================================
+% SEZIONE 1: INTRODUZIONE
+% =========================================================================
+\section{Introduzione}
+Nei sistemi di controllo robotico operanti in ambiente deterministico e real-time (con frequenze operative comprese tra 200 Hz e 1 kHz), la minimizzazione della latenza computazionale e l'eliminazione del jitter di memoria sono requisiti fondamentali.
+
+Questo documento analizza l'evoluzione dell'architettura software del modulo di controllo robotico denominato \texttt{DualArmControl}, sviluppato sul framework \texttt{mc\_rtc}. L'architettura è stata ottimizzata con un pattern basato su un \textbf{Doppio Puntatore a Funzione Membro} a esecuzione deterministica pre-allocata.
+
+
+% =========================================================================
+% SEZIONE 2: ARCHITETTURA DEL CODICE C++
+% =========================================================================
+\section{Architettura e Struttura del Codice C++}
+La vecchia implementazione software si appoggiava su flag booleani locali per discriminare la prima esecuzione di uno stato dall'esecuzione ciclica. Il nuovo design introduce una separazione netta e strutturale tra la fase di ingresso \textit{one-shot} in uno stato (\textit{Entry}) e la successiva esecuzione ciclica (\textit{Run}).
+
+\subsection{Pattern FSM a Doppio Puntatore}
+L'astrazione si basa sull'alias di tipo \texttt{StateMethod}, definito come puntatore a una funzione membro della classe di controllo:
+
+\begin{lstlisting}
+using StateMethod = void (DualArmControl::*)();
+StateMethod currentState;
+\end{lstlisting}
+
+Il meccanismo di transizione gestisce la sequenza logica di switch in modo sicuro:
+
+\begin{lstlisting}
+void DualArmControl::transitionTo(StateMethod entryMethod, 
+                                  StateMethod runMethod) {
+    if (!entryMethod || !runMethod) return;
+    stateTimer = 0.0; 
+    (this->*entryMethod)(); 
+    currentState = runMethod; 
+}
+\end{lstlisting}
+
+Grazie a questa astrazione, il loop principale di controllo \texttt{run()} viene liberato da qualsiasi ramificazione condizionale o istruzione di salto indotto:
+
+\begin{lstlisting}
+bool DualArmControl::run() {
+    (this->*currentState)(); 
+    return mc_control::MCController::run();
+}
+\end{lstlisting}
+
+\subsection{Pre-allocazione e Azzeramento del Real-Time Jitter}
+All'interno del costruttore e del metodo di \texttt{reset()}, tutti i task del solutore quadratico (QP) come \texttt{PostureTask}, \texttt{EndEffectorTask} e \texttt{ImpedanceTask} vengono allocati preventivamente nello spazio di memoria. 
+
+Durante l'esecuzione sincrona nei singoli stati della FSM, il controllore si limita ad attivare o disattivare i task allocati inserendoli o rimuovendoli dal solutore di ottimizzazione attraverso i metodi nativi del framework:
+\begin{lstlisting}
+solver().addTask(leftEdgeTask);
+solver().removeTask(leftEdgeTask);
+\end{lstlisting}
+Questo approccio previene allocazioni dinamiche a runtime.
+
+
+
+% =========================================================================
+% SEZIONE 4: DOCUMENTAZIONE DEL CONTROLLORE
+% =========================================================================
+\section{Documentazione del Controllore}
+Questa sezione descrive le specifiche operative per l'utilizzo e l'estensione del modulo software.
+
+\subsection{Flusso di Esecuzione della FSM}
+La macchina a stati si sviluppa secondo tre macro-fasi sequenziali stabili:
+\begin{enumerate}
+    \item \textbf{IDLE}: Stato di sicurezza iniziale. Vincola il robot nella configurazione iniziale per 3.0 secondi.
+    \item \textbf{INDEPENDENT}: Attiva i task operativi nello spazio cartesiano per gli end-effector destro e sinistro, guidando i bracci robotici verso coordinate operative indipendenti dello spazio di lavoro.
+    \item \textbf{COLLABORATIVE}: Disattiva i vincoli cinematici indipendenti e inizializza i task di controllo ad impedenza. Definisce un sistema di riferimento virtuale centrale interpolando la traiettoria per la manipolazione cooperativa di un corpo rigido.
+\end{enumerate}
+
+\subsection{Guida per l'Aggiunta di un Nuovo Stato}
+Per inserire un ulteriore stato logico all'interno della FSM (ad esempio uno stato denominato \texttt{stateEmergency}), è sufficiente seguire questa procedura in tre passaggi:
+
+\subsubsection*{1. Definizione dell'Interfaccia nell'Header}
+Includere i prototipi dei metodi di Entry e di Run all'interno dell'area privata del file di testata:
+\begin{lstlisting}
+void entryStateEmergency();
+void stateEmergency();
+\end{lstlisting}
+
+\subsubsection*{2. Sviluppo della Logica nel Sorgente}
+Implementare le funzioni isolando la logica di configurazione iniziale dai cicli di calcolo iterativi:
+\begin{lstlisting}
+void DualArmControl::entryStateEmergency() {
+    solver().removeTask(leftImpedanceTask);
+    solver().removeTask(rightImpedanceTask);
+}
+
+void DualArmControl::stateEmergency() {
+    stateTimer += timeStep;
+}
+\end{lstlisting}
+
+\subsubsection*{3. Chiamata della Routine di Transizione}
+Eseguire lo switch dello stato chiamando il metodo di transizione preposto da un qualsiasi punto della FSM attiva utilizzando i relativi riferimenti di istanza:
+\begin{lstlisting}
+this->transitionTo(&DualArmControl::entryStateEmergency, 
+                   &DualArmControl::stateEmergency);
+\end{lstlisting}
+
+\end{document}

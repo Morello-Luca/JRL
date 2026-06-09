@@ -3,61 +3,72 @@
 #include <mc_control/mc_controller.h>
 #include <mc_tasks/EndEffectorTask.h>
 #include <mc_tasks/PostureTask.h>
-#include <mc_solver/CollisionsConstraint.h>
-#include <mc_tasks/TransformTask.h>
 #include <mc_tasks/ImpedanceTask.h>
-#include <mc_rbdyn/RobotFrame.h>
 
-
-#include "api.h"
-
-
-enum ControllerPhase
+class DualArmControl : public mc_control::MCController
 {
-  IDLE = 0,
-  DUAL,
-  INDIPENDENT
-};
+public:
+  DualArmControl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration &config);
 
-
-
-
-struct DualArmControl_DLLAPI DualArmControl : public mc_control::MCController
-{
-  DualArmControl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config);
-
+  void reset(const mc_control::ControllerResetData &reset_data) override;
   bool run() override;
 
-  void reset(const mc_control::ControllerResetData & reset_data) override;
+private:
+  // 1. ==========================================================
+  // THE DUAL-POINTER FUNCTION DECLARATIONS
+  // ==========================================================
+  using StateMethod = void (DualArmControl::*)();
+  StateMethod currentState_;
 
+  void stateNoOp() {}
+  void transitionTo(StateMethod entryMethod, StateMethod runMethod);
 
+  // State Pairs (Entry and Run)
+  void entryStateIdle();
+  void stateIdle();
 
-  private:
-    //  Controller state
-        ControllerPhase phase_ = IDLE;
+  void entryStateIndependent();
+  void stateIndependent();
 
-    // Collision avoidance
-        const double iDist = 0.1;
-        const double sDist = 0.05;
+  void entryStateCollaborative();
+  void stateCollaborative();
 
-    // TASKS
-      // Position
-        std::shared_ptr<mc_tasks::EndEffectorTask> LeftEndEffectorTask_;
-        std::shared_ptr<mc_tasks::EndEffectorTask> RightEndEffectorTask_;
-      // Force 
-        std::shared_ptr<mc_tasks::force::ImpedanceTask> leftImpedanceTask_;
-        std::shared_ptr<mc_tasks::force::ImpedanceTask> rightImpedanceTask_;
-    
-    // FUNCTIONS
-        void runDual();
-        void runIndipendent();  
-        void runOffsetFrame();  
+  // 2. ==========================================================
+  // PRE-ALLOCATED TASK POINTERS (Fixed naming to match .cpp)
+  // ==========================================================
+  std::shared_ptr<mc_tasks::PostureTask> rightPostureTask_;
+  std::shared_ptr<mc_tasks::EndEffectorTask> leftEeTask_;
+  std::shared_ptr<mc_tasks::EndEffectorTask> rightEeTask_;
+  std::shared_ptr<mc_tasks::force::ImpedanceTask> leftImpedanceTask_;
+  std::shared_ptr<mc_tasks::force::ImpedanceTask> rightImpedanceTask_;
 
-    // Offset Frames
-        std::shared_ptr<mc_rbdyn::RobotFrame> leftOffsetFrame_;
-        std::shared_ptr<mc_rbdyn::RobotFrame> rightOffsetFrame_;
+  // 3. ==========================================================
+  // STATE MEMBER VARIABLES (Fixed lowercase 'x' to match .cpp)
+  // ==========================================================
+  sva::PTransformd x_0_objectCurrent_;
+  sva::PTransformd x_0_objectFinalWaypoint_;
+  sva::PTransformd leftOffset_;
+  sva::PTransformd rightOffset_;
 
-      
+  // 4. ==========================================================
+  // CONTROLLER CONSTANTS AND UTILITIES
+  // ==========================================================
+  unsigned int leftRobotIndex_ = 0;
+  unsigned int rightRobotIndex_ = 0;
 
+  const std::string eeName_ = "link7";
+  double stateTimer_ = 0.0;
 
+  double iDist = 0.05;
+  double sDist = 0.01;
+
+  // 4. ==========================================================
+  // IMPEDANCE GAINS (M, D, K matrices)
+  // ==========================================================
+  Eigen::Vector6d massGains;   // Virtual Mass (kg / kg*m^2)
+  Eigen::Vector6d springGains; // Virtual Stiffness (N/m)
+  // Analytically compute critical damping: D = 2 * sqrt(K * M) to avoid oscillations
+  Eigen::Vector6d damperGains;
+  // Wrench feedforward/feedback gain matrix (dimensionless scaling factor)
+  Eigen::Vector6d wrenchGains;
 };
