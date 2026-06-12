@@ -89,8 +89,8 @@ void DualArmControl::reset(const mc_control::ControllerResetData &resetData)
   Order: [Torque_X, Torque_Y, Torque_Z, Force_X, Force_Y, Force_Z]
 
   */
-  // sva::ForceVecd targetWrench(Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, 10.0));
-  // leftImpedanceTask_->targetWrench(targetWrench);
+  sva::ForceVecd targetWrench(Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, 25.0));
+  leftImpedanceTask_->targetWrench(targetWrench);
   // rightImpedanceTask_->targetWrench(targetWrench);
 
   // Telemetria (Logger)
@@ -136,7 +136,8 @@ void DualArmControl::stateIdle()
   if (stateTimer_ >= 3.0)
   {
     mc_rtc::log::success("[FSM] IDLE Phase complete. Switching to INDEPENDENT.");
-    transitionTo(&DualArmControl::entryStateIndependent, &DualArmControl::stateIndependent);
+    //    transitionTo(&DualArmControl::entryStateIndependent, &DualArmControl::stateIndependent);
+    transitionTo(&DualArmControl::entryStateCollaborative, &DualArmControl::stateCollaborative);
   }
 }
 
@@ -150,7 +151,7 @@ void DualArmControl::entryStateIndependent()
   solver().addTask(leftEeTask_);
   solver().addTask(rightEeTask_);
 
-  leftEeTask_->add_ef_pose({Eigen::Vector3d(0.2, 0.0, 0.4)});
+  leftEeTask_->add_ef_pose({Eigen::Vector3d(0.50, 0.25, 0.09)});
   rightEeTask_->add_ef_pose({Eigen::Vector3d(0.2, -0.0, 0.4)});
 
   postureTask->stiffness(1.0);
@@ -202,33 +203,70 @@ void DualArmControl::entryStateCollaborative()
   solver().addTask(leftImpedanceTask_);
   solver().addTask(rightImpedanceTask_);
 
-  // Definizione del Target Finale dell'oggetto virtuale
-  x_0_objectFinalWaypoint_ = sva::PTransformd(objectRotation, Eigen::Vector3d(0.50, 0.25, 0.09));
+  // Index iniziale
+  collaborativeWaypointIndex_ = 0;
+
+  // =========================================================================
+  // DEFINIZIONE DEI WAYPOINT DELL'OGGETTO VIRTUALE
+  // =========================================================================
+  // Waypoint 1 (Quello originale)
+  x_0_objectWaypoint1_ = sva::PTransformd(objectRotation, Eigen::Vector3d(0.50, 0.25, 0.09));
+
+  // Waypoint 2 (Nuovo - Es: Si sposta più avanti di 20cm e si alza di 10cm)
+  x_0_objectWaypoint2_ = sva::PTransformd(objectRotation, Eigen::Vector3d(0.70, 0.25, 0.19));
 }
 
 void DualArmControl::stateCollaborative()
 {
-  const Eigen::Vector3d errorPos = x_0_objectFinalWaypoint_.translation() - x_0_objectCurrent_.translation();
+  // 1. Seleziona il target attivo in base all'indice del waypoint
+  sva::PTransformd targetWaypoint;
+  if (collaborativeWaypointIndex_ == 0)
+  {
+    targetWaypoint = x_0_objectWaypoint1_;
+  }
+  else
+  {
+    targetWaypoint = x_0_objectWaypoint2_;
+  }
+
+  // 2. Calcolo dell'errore rispetto al waypoint attivo
+  const Eigen::Vector3d errorPos = targetWaypoint.translation() - x_0_objectCurrent_.translation();
   const double dist = errorPos.norm();
 
   const double targetSpeed = 0.05; // 5 cm/s
   const double maxStep = targetSpeed * timeStep;
 
-  // Interpolazione lineare della traslazione (evitando divisioni per zero)
+  // Interpolazione lineare della traslazione
   if (dist > maxStep)
   {
     x_0_objectCurrent_.translation() += errorPos * (maxStep / dist);
   }
   else
   {
-    x_0_objectCurrent_ = x_0_objectFinalWaypoint_;
+    x_0_objectCurrent_ = targetWaypoint;
+
+    // Se siamo arrivati al Waypoint 1, passiamo al Waypoint 2
+    if (collaborativeWaypointIndex_ == 0)
+    {
+      mc_rtc::log::success("[FSM] Waypoint 1 reached! Switching to Waypoint 2.");
+      collaborativeWaypointIndex_ = 1;
+    }
+    else
+    {
+      // Log statico per evitare spam a schermo una volta finiti tutti i waypoint
+      static bool printedOnce = false;
+      if (!printedOnce)
+      {
+        mc_rtc::log::success("[FSM] All Collaborative Waypoints reached. Holding position.");
+        printedOnce = true;
+      }
+    }
   }
 
-  // Aggiornamento dei target di impedenza preservando la cinematica rigida dell'oggetto
+  // 3. Aggiornamento dei target di impedenza preservando la cinematica rigida dell'oggetto
   leftImpedanceTask_->targetPose(leftOffset_ * x_0_objectCurrent_);
   rightImpedanceTask_->targetPose(rightOffset_ * x_0_objectCurrent_);
 }
-
 // ==========================================
 // MAIN REAL-TIME LOOP
 // ==========================================

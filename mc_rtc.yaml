@@ -1,0 +1,16 @@
+MainRobot: xArm7
+Enabled: DualArmControl
+Timestep: 0.001
+
+
+
+robots:
+
+  box1:
+    module: "env/box"
+
+    init_pos:
+      translation: [0.50, 0.25, 0.09]
+      rotation: [0, 0, 0]
+    
+

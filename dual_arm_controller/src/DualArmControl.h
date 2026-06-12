@@ -46,9 +46,13 @@ private:
   // STATE MEMBER VARIABLES (Fixed lowercase 'x' to match .cpp)
   // ==========================================================
   sva::PTransformd x_0_objectCurrent_;
-  sva::PTransformd x_0_objectFinalWaypoint_;
   sva::PTransformd leftOffset_;
   sva::PTransformd rightOffset_;
+
+  // Gestione Multi-Waypoint Collaborativi
+  int collaborativeWaypointIndex_ = 0;   // Traccia il waypoint corrente (0 = Primo, 1 = Secondo)
+  sva::PTransformd x_0_objectWaypoint1_; // Vecchio x_0_objectFinalWaypoint_
+  sva::PTransformd x_0_objectWaypoint2_; // Nuovo secondo waypoint
 
   // 4. ==========================================================
   // CONTROLLER CONSTANTS AND UTILITIES
