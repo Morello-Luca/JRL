@@ -49,6 +49,13 @@ This project implements a multi-robot controller leveraging the mc_rtc framework
 * **Rigid Object Kinematics:** Computes virtual object frames and rigid transformation offsets dynamically.
 * **Critically Damped Impedance:** Automatically derives damper gains based on virtual stiffness and mass matrices to prevent system oscillations.
 
+### Dependencies
+
+Before compiling, ensure you have the following system packages and libraries installed:
+
+* **Core Framework:** `mc_rtc`
+* **Other Packages:** `mc_xarm`
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Built With
