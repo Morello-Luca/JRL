@@ -9,12 +9,6 @@
 
 ---
 
-### Dependencies
-Ensure your global system has these core frameworks installed:
-* **Core:** `mc_rtc` (includes `SpaceVecAlg` & `RBDyn`)
-* **Middleware:** `ROS` / `ROS2`
-* **Math:** `Eigen3`
-
 ### Built With
 * [![mc_rtc][mc_rtc-shield]][mc_rtc-url] [![Eigen][Eigen-shield]][Eigen-url] [![C++][Cplus-shield]][Cplus-url] [![ROS][ROS-shield]][ROS-url]
 
