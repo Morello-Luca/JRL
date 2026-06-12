@@ -75,7 +75,7 @@ The controller executes an asynchronous state machine using a memory-safe double
 
 | Phase | State Function | Duration / Trigger | Core Objective |
 | :--- | :--- | :--- | :--- |
-| **1. IDLE** | stateIdle | t >= 3.0s | Absolute holding state to settle kinematics/gravity initialization. |
+| **1. IDLE** | stateIdle | t >= 3.0s | Initialization, waiting for an external event |
 | **2. INDEPENDENT** | stateIndependent | Cartesian error < 3 cm & speed < 0.5 cm/s | Both end-effectors independently drive to distinct spatial coordinates. |
 | **3. COLLABORATIVE** | stateCollaborative | Linear interpolation down path | Arms lock onto an interpolated virtual object frame via rigid offsets. |
 
