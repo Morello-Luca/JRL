@@ -111,6 +111,7 @@ Coupled force control is sustained through 6D task spaces ordered as [Angular_X,
    make
 
 3. Enable the plugin module inside your global system configuration (~/.config/mc_rtc/mc_rtc.yaml):
+   MainRobot: xArm7
    Enabled: DualArmControl
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -122,8 +123,8 @@ Coupled force control is sustained through 6D task spaces ordered as [Angular_X,
 - [x] Pre-allocate tasks to eliminate real-time memory jitter
 - [x] Analytic calculation for critical damping matrices
 - [x] Trajectory interpolation of virtual frames for multiple waypoints
-- [ ] Direct integration of physical force/torque sensor hardware feedback streams
-- [ ] Implement spherical linear interpolation (Slerp) on virtual object orientation
+- [ ] Collect data of force and position errors during manipulation
+- [ ] Implement and test on real Hardware
 
 See the [open issues](https://github.com/github_username/dual-arm-control/issues) for a full list of proposed extensions.
 
