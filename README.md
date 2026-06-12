@@ -9,11 +9,6 @@
 
 ---
 
-### Built With
-* [![mc_rtc][mc_rtc-shield]][mc_rtc-url] [![Eigen][Eigen-shield]][Eigen-url] [![C++][Cplus-shield]][Cplus-url] [![ROS][ROS-shield]][ROS-url]
-
----
-
 ## Overview
 
 This repository serves as a unified workspace for developing and managing multiple robotic control applications. Instead of maintaining separate repositories for different research experiments, kinematic tasks, or hardware setups, this monorepo structures each controller as an isolated sub-folder under a single master CMake build system.
