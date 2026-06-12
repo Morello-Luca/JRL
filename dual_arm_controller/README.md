@@ -102,10 +102,6 @@ Coupled force control is sustained through 6D task spaces ordered as [Angular_X,
 
 ## Getting Started
 
-### Prerequisites
-* Fully installed and configured mc_rtc framework workspace.
-* Kinematic descriptions for the xArm7 robot registered inside the RobotLoader path.
-
 ### Installation & Compilation
 
 1. Clone the repository into your local mc_rtc source directory:
