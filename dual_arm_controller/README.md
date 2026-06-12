@@ -9,7 +9,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/github_username/dual-arm-control">
-    <img src="https://raw.githubusercontent.com/xArm-Developer/xarm_ros/master/res/xarm7_architecture.png" alt="Logo" width="120" height="120" onerror="this.src='https://img.shields.io/badge/Robot-mc__rtc-blue?style=for-the-badge'">
+    <img src="images/logo.png" alt="Logo" width="120" height="120" onerror="this.src='https://img.shields.io/badge/Robot-mc__rtc-blue?style=for-the-badge'">
   </a>
 
   <h3 align="center">Dual-Arm Impedance Control</h3>
@@ -77,15 +77,15 @@ The controller executes an asynchronous state machine using a memory-safe double
 ## Control Architecture
 
 ### 1. Kinematic Layout & Collision Bounds
-Le due braccia robotiche sono gestite nello stesso spazio cartesiano. L'istanza principale (xarm7) si trova nell'origine, mentre la seconda (xarm7_2) viene caricata con un offset di 0.5 metri sull'asse Y. I vincoli di auto-collisione globale impediscono impatti geometrici tra tutti i link dei due robot.
+Both robotic arms are managed within the same Cartesian workspace. The primary instance (xarm7) sits at the origin, while the secondary instance (xarm7_2) is loaded with a 0.5-meter offset along the Y-axis. Global self-collision constraints prevent geometric impacts between all links of the two robots.
 
 ### 2. Impedance Task Configurations
-Il controllo accoppiato della forza si basa su vettori a 6 dimensioni ordinati come [Angular_X, Angular_Y, Angular_Z, Linear_X, Linear_Y, Linear_Z]:
+Coupled force control is sustained through 6D task spaces ordered as [Angular_X, Angular_Y, Angular_Z, Linear_X, Linear_Y, Linear_Z]:
 
-* **Virtual Mass Matrix (M):** Impostata a 1.0 costante su tutti gli assi.
-* **Virtual Stiffness (K):** Impostata a 200.0 N/m costante per la risposta elastica.
-* **Analytic Damping Calculation (D):** Calcolato analiticamente per garantire lo smorzamento critico ed evitare oscillazioni distruttive: D = 2 * sqrt(K * M).
-* **Feedforward Target Wrench:** Applica una forza costante di 25.0 N diretta verso il basso lungo l'asse lineare Z.
+* **Virtual Mass Matrix (M):** Configured as a constant 1.0 across all dimensions.
+* **Virtual Stiffness (K):** Set to a constant 200.0 N/m for the elastic response profile.
+* **Analytic Damping Calculation (D):** Derived analytically to ensure critical damping and avoid destructive system oscillations: D = 2 * sqrt(K * M).
+* **Feedforward Target Wrench:** Preloads a constant 25.0 N linear downforce directed along the Z-axis.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -94,21 +94,21 @@ Il controllo accoppiato della forza si basa su vettori a 6 dimensioni ordinati c
 ## Getting Started
 
 ### Prerequisites
-* Framework mc_rtc installato e configurato correttamente.
-* Descrizioni cinematiche del robot xArm7 registrate all'interno del RobotLoader.
+* Fully installed and configured mc_rtc framework workspace.
+* Kinematic descriptions for the xArm7 robot registered inside the RobotLoader path.
 
 ### Installation & Compilation
 
-1. Clona il progetto nella cartella dei tuoi controller mc_rtc:
+1. Clone the repository into your local mc_rtc source directory:
    git clone https://github.com/github_username/dual-arm-control.git
    cd dual-arm-control
 
-2. Compila i sorgenti C++ tramite CMake:
+2. Compile the C++ source files using CMake:
    mkdir build && cd build
    cmake ..
    make
 
-3. Abilita il plugin aggiungendo il modulo nel tuo file di configurazione globale (~/.config/mc_rtc/mc_rtc.yaml):
+3. Enable the plugin module inside your global system configuration (~/.config/mc_rtc/mc_rtc.yaml):
    Enabled: DualArmControl
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -117,11 +117,11 @@ Il controllo accoppiato della forza si basa su vettori a 6 dimensioni ordinati c
 
 ## Roadmap
 
-- [x] Pre-allocazione dei Task per azzerare il memory jitter in tempo reale
-- [x] Calcolo analitico dinamico della matrice di smorzamento critico
-- [x] Interpolazione lineare dei waypoint dell'oggetto virtuale
-- [ ] Integrazione diretta dei flussi dei sensori di forza/coppia reali
-- [ ] Implementazione dell'interpolazione sferica (Slerp) sull'orientamento del frame
+- [x] Pre-allocate tasks to eliminate real-time memory jitter
+- [x] Analytic calculation for critical damping matrices
+- [x] Trajectory interpolation of virtual frames for multiple waypoints
+- [ ] Direct integration of physical force/torque sensor hardware feedback streams
+- [ ] Implement spherical linear interpolation (Slerp) on virtual object orientation
 
 See the [open issues](https://github.com/github_username/dual-arm-control/issues) for a full list of proposed extensions.
 
@@ -134,17 +134,6 @@ Distributed under the Unlicense License. See LICENSE for more information.
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
-
-[contributors-shield]: https://img.shields.io/github/contributors/github_username/dual-arm-control.svg?style=for-the-badge
-[contributors-url]: https://github.com/github_username/dual-arm-control/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/github_username/dual-arm-control.svg?style=for-the-badge
-[forks-url]: https://github.com/github_username/dual-arm-control/network/members
-[stars-shield]: https://img.shields.io/github/stars/github_username/dual-arm-control.svg?style=for-the-badge
-[stars-url]: https://github.com/github_username/dual-arm-control/stargazers
-[issues-shield]: https://img.shields.io/github/issues/github_username/dual-arm-control.svg?style=for-the-badge
-[issues-url]: https://github.com/github_username/dual-arm-control/issues
-[license-shield]: https://img.shields.io/github/license/github_username/dual-arm-control.svg?style=for-the-badge
-[license-url]: https://github.com/github_username/dual-arm-control/blob/master/LICENSE
 
 [mc_rtc-shield]: https://img.shields.io/badge/Framework-mc__rtc-blue?style=for-the-badge&logo=robotframework
 [mc_rtc-url]: https://jrl-umi-aist.github.io/mc_rtc/
