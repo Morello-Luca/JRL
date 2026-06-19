@@ -90,8 +90,8 @@ void DualArmControl::reset(const mc_control::ControllerResetData &resetData)
 
   */
   sva::ForceVecd targetWrench(Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, 25.0));
-  leftImpedanceTask_->targetWrench(targetWrench);
-  // rightImpedanceTask_->targetWrench(targetWrench);
+  // leftImpedanceTask_->targetWrench(targetWrench);
+  //  rightImpedanceTask_->targetWrench(targetWrench);
 
   // Telemetria (Logger)
   logger().addLogEntry("debug_LeftTask_eval_norm", [this]()
@@ -180,12 +180,14 @@ void DualArmControl::stateIndependent()
 // =========================================================================
 void DualArmControl::entryStateCollaborative()
 {
-  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (True Slerp & Linear Trajectory).");
+  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (Single Unified Smooth Trajectory).");
 
   const sva::PTransformd X_0_leftEE = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
   const sva::PTransformd X_0_rightEE = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
 
-  // Calcolo frame oggetto iniziale reale
+  // =====================================================
+  // BUILD GRASP FRAME (Iniziale reale)
+  // =====================================================
   const Eigen::Vector3d pL = X_0_leftEE.translation();
   const Eigen::Vector3d pR = X_0_rightEE.translation();
   const Eigen::Vector3d center = 0.5 * (pL + pR);
@@ -203,77 +205,65 @@ void DualArmControl::entryStateCollaborative()
 
   x_0_objectCurrent_ = sva::PTransformd(Eigen::Quaterniond(Robj), center);
 
-  // SALVIAMO IL PUNTO DI PARTENZA REALE
+  // Salviamo la partenza esatta
   x_0_objectStart_ = x_0_objectCurrent_;
 
-  // Calcolo offset rigidi fissi
+  // =====================================================
+  // RIGID OFFSETS
+  // =====================================================
   leftOffset_ = X_0_leftEE * x_0_objectCurrent_.inv();
   rightOffset_ = X_0_rightEE * x_0_objectCurrent_.inv();
 
-  // Reset del timer della traiettoria
+  // =====================================================
+  // DEFINIZIONE UNICO TARGET FINALE
+  // =====================================================
+  // Vogliamo che l'oggetto arrivi in (0.50, 0.25, 0.09) E ruotato di 45 gradi rispetto a prima
+  Eigen::Quaterniond q_start(x_0_objectStart_.rotation());
+  Eigen::Quaterniond q_rot(sva::RotZ(M_PI / 4.0)); // Rotazione di 45° su Z del mondo
+  Eigen::Quaterniond q_target = q_rot * q_start;
+
+  // Unico obiettivo finale (assegnato a x_0_objectWaypoint1_ per comodità con l'header esistente)
+  x_0_objectWaypoint1_ = sva::PTransformd(q_target, Eigen::Vector3d(0.50, 0.25, 0.09));
+
+  // Reset del timer temporale
   collaborativeTime_ = 0.0;
-  collaborativeWaypointIndex_ = 0;
+  totalTrajectoryDuration_ = 6.0; // Diamo 6 secondi per fare tutto il movimento con calma
 
-  // Definizione dei Waypoint fissi nel mondo
-  Eigen::Quaterniond q0(x_0_objectStart_.rotation());
-  x_0_objectWaypoint1_ = sva::PTransformd(q0, Eigen::Vector3d(0.50, 0.25, 0.09));
-
-  Eigen::Quaterniond q_rot(sva::RotZ(M_PI / 4.0));
-  x_0_objectWaypoint2_ = sva::PTransformd(q_rot * q0, Eigen::Vector3d(0.50, 0.25, 0.09));
-
-  // Configurazione iniziale task
+  // Attivazione Task
   const auto &envFrame = robots().env().frame("ground");
   leftImpedanceTask_->targetFrame(envFrame, X_0_leftEE);
   rightImpedanceTask_->targetFrame(envFrame, X_0_rightEE);
+
   solver().addTask(leftImpedanceTask_);
   solver().addTask(rightImpedanceTask_);
 }
 
 void DualArmControl::stateCollaborative()
 {
-  // Selezioniamo il target corrente
-  sva::PTransformd targetWaypoint = (collaborativeWaypointIndex_ == 0) ? x_0_objectWaypoint1_ : x_0_objectWaypoint2_;
-
   // Avanzamento del tempo dello stato
   collaborativeTime_ += timeStep;
-
-  // Calcolo del parametro normalizzato del tempo t_norm in [0, 1]
   double t_norm = std::min(1.0, collaborativeTime_ / totalTrajectoryDuration_);
 
-  // --- PROFILO QUINTICO MORBIDO (Polinomio di 5° grado per S) ---
-  // s(0) = 0, s(1) = 1. Velocità e accelerazioni iniziali/finali sono a zero.
+  // Profilo quintico smooth per lo scalare s in [0, 1]
   double s = 10.0 * std::pow(t_norm, 3) - 15.0 * std::pow(t_norm, 4) + 6.0 * std::pow(t_norm, 5);
 
-  // --- INTERPOLAZIONE SINCRONIZZATA ---
-  // 1. Traslazione Lineare perfetta basata su s
+  // Interpolazione Sincronizzata (Unica rampa)
   Eigen::Vector3d startPos = x_0_objectStart_.translation();
-  Eigen::Vector3d targetPos = targetWaypoint.translation();
+  Eigen::Vector3d targetPos = x_0_objectWaypoint1_.translation();
   x_0_objectCurrent_.translation() = startPos + s * (targetPos - startPos);
 
-  // 2. Rotazione SLERP perfetta basata sullo stesso identico s
   Eigen::Quaterniond q_start(x_0_objectStart_.rotation());
-  Eigen::Quaterniond q_target(targetWaypoint.rotation());
+  Eigen::Quaterniond q_target(x_0_objectWaypoint1_.rotation());
   x_0_objectCurrent_.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
 
-  // Controllo fine traiettoria per questo waypoint
+  // Se la traiettoria è conclusa, blocca il frame sul target finale
   if (t_norm >= 1.0)
   {
-    if (collaborativeWaypointIndex_ == 0)
-    {
-      mc_rtc::log::info("[FSM] Waypoint 1 compleded smoothly. Switching to Waypoint 2.");
-      collaborativeWaypointIndex_ = 1;
-      collaborativeTime_ = 0.0;              // Resetta il tempo per il prossimo pezzo
-      x_0_objectStart_ = x_0_objectCurrent_; // La nuova partenza è dove ci troviamo ora
-    }
-    else
-    {
-      // Traiettoria finita, mantieni l'ultimo target stabile
-      x_0_objectCurrent_ = targetWaypoint;
-    }
+    x_0_objectCurrent_ = x_0_objectWaypoint1_;
   }
 
   // =========================================================================
-  // 4. GENERAZIONE TARGET PER I MANIPOLATORI
+  // GENERAZIONE TARGET PER I COMPITI D'IMPEDENZA (Invariato e geometrico)
   // =========================================================================
   const auto &envFrame = robots().env().frame("ground");
 
