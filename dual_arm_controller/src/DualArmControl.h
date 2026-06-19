@@ -32,6 +32,7 @@ private:
 
   void entryStateCollaborative();
   void stateCollaborative();
+  void offsetCalc();
 
   // 2. ==========================================================
   // PRE-ALLOCATED TASK POINTERS (Fixed naming to match .cpp)
@@ -65,6 +66,9 @@ private:
 
   double iDist = 0.05;
   double sDist = 0.01;
+  double collaborativeTime_ = 0.0;
+  double totalTrajectoryDuration_ = 5.0;
+  sva::PTransformd x_0_objectStart_;
 
   // 4. ==========================================================
   // IMPEDANCE GAINS (M, D, K matrices)
