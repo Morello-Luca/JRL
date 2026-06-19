@@ -180,92 +180,108 @@ void DualArmControl::stateIndependent()
 // =========================================================================
 void DualArmControl::entryStateCollaborative()
 {
-  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (Object Interpolation).");
+  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (True Slerp & Linear Trajectory).");
 
   const sva::PTransformd X_0_leftEE = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
   const sva::PTransformd X_0_rightEE = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
 
-  // Calcolo del centro geometrico tra i due End Effector
-  const Eigen::Vector3d middleTranslation = (X_0_leftEE.translation() + X_0_rightEE.translation()) * 0.5;
-  const Eigen::Matrix3d objectRotation = robots().robot(leftRobotIndex_).bodyPosW("link_base").rotation();
+  // Calcolo frame oggetto iniziale reale
+  const Eigen::Vector3d pL = X_0_leftEE.translation();
+  const Eigen::Vector3d pR = X_0_rightEE.translation();
+  const Eigen::Vector3d center = 0.5 * (pL + pR);
 
-  // Inizializzazione del frame virtuale dell'oggetto
-  x_0_objectCurrent_ = sva::PTransformd(objectRotation, middleTranslation);
+  Eigen::Vector3d x = (pR - pL).normalized();
+  Eigen::Vector3d z = Eigen::Vector3d::UnitZ();
+  if (std::abs(x.dot(z)) > 0.95)
+    z = Eigen::Vector3d::UnitY();
+  Eigen::Vector3d y = z.cross(x).normalized();
+  z = x.cross(y).normalized();
+  Eigen::Matrix3d Robj;
+  Robj.col(0) = x;
+  Robj.col(1) = y;
+  Robj.col(2) = z;
 
-  // Calcolo degli offset relativi rigidi usando l'algebra delle trasformazioni mc_rtc
+  x_0_objectCurrent_ = sva::PTransformd(Eigen::Quaterniond(Robj), center);
+
+  // SALVIAMO IL PUNTO DI PARTENZA REALE
+  x_0_objectStart_ = x_0_objectCurrent_;
+
+  // Calcolo offset rigidi fissi
   leftOffset_ = X_0_leftEE * x_0_objectCurrent_.inv();
   rightOffset_ = X_0_rightEE * x_0_objectCurrent_.inv();
 
-  // Setup dei task di impedenza sulla posizione corrente
-  leftImpedanceTask_->targetPose(X_0_leftEE);
-  rightImpedanceTask_->targetPose(X_0_rightEE);
-
-  solver().addTask(leftImpedanceTask_);
-  solver().addTask(rightImpedanceTask_);
-
-  // Index iniziale
+  // Reset del timer della traiettoria
+  collaborativeTime_ = 0.0;
   collaborativeWaypointIndex_ = 0;
 
-  // =========================================================================
-  // DEFINIZIONE DEI WAYPOINT DELL'OGGETTO VIRTUALE
-  // =========================================================================
-  // Waypoint 1 (Quello originale)
-  x_0_objectWaypoint1_ = sva::PTransformd(objectRotation, Eigen::Vector3d(0.50, 0.25, 0.09));
+  // Definizione dei Waypoint fissi nel mondo
+  Eigen::Quaterniond q0(x_0_objectStart_.rotation());
+  x_0_objectWaypoint1_ = sva::PTransformd(q0, Eigen::Vector3d(0.50, 0.25, 0.09));
 
-  // Waypoint 2 (Nuovo - Es: Si sposta più avanti di 20cm e si alza di 10cm)
-  x_0_objectWaypoint2_ = sva::PTransformd(objectRotation, Eigen::Vector3d(0.70, 0.25, 0.19));
+  Eigen::Quaterniond q_rot(sva::RotZ(M_PI / 4.0));
+  x_0_objectWaypoint2_ = sva::PTransformd(q_rot * q0, Eigen::Vector3d(0.50, 0.25, 0.09));
+
+  // Configurazione iniziale task
+  const auto &envFrame = robots().env().frame("ground");
+  leftImpedanceTask_->targetFrame(envFrame, X_0_leftEE);
+  rightImpedanceTask_->targetFrame(envFrame, X_0_rightEE);
+  solver().addTask(leftImpedanceTask_);
+  solver().addTask(rightImpedanceTask_);
 }
 
 void DualArmControl::stateCollaborative()
 {
-  // 1. Seleziona il target attivo in base all'indice del waypoint
-  sva::PTransformd targetWaypoint;
-  if (collaborativeWaypointIndex_ == 0)
-  {
-    targetWaypoint = x_0_objectWaypoint1_;
-  }
-  else
-  {
-    targetWaypoint = x_0_objectWaypoint2_;
-  }
+  // Selezioniamo il target corrente
+  sva::PTransformd targetWaypoint = (collaborativeWaypointIndex_ == 0) ? x_0_objectWaypoint1_ : x_0_objectWaypoint2_;
 
-  // 2. Calcolo dell'errore rispetto al waypoint attivo
-  const Eigen::Vector3d errorPos = targetWaypoint.translation() - x_0_objectCurrent_.translation();
-  const double dist = errorPos.norm();
+  // Avanzamento del tempo dello stato
+  collaborativeTime_ += timeStep;
 
-  const double targetSpeed = 0.05; // 5 cm/s
-  const double maxStep = targetSpeed * timeStep;
+  // Calcolo del parametro normalizzato del tempo t_norm in [0, 1]
+  double t_norm = std::min(1.0, collaborativeTime_ / totalTrajectoryDuration_);
 
-  // Interpolazione lineare della traslazione
-  if (dist > maxStep)
+  // --- PROFILO QUINTICO MORBIDO (Polinomio di 5° grado per S) ---
+  // s(0) = 0, s(1) = 1. Velocità e accelerazioni iniziali/finali sono a zero.
+  double s = 10.0 * std::pow(t_norm, 3) - 15.0 * std::pow(t_norm, 4) + 6.0 * std::pow(t_norm, 5);
+
+  // --- INTERPOLAZIONE SINCRONIZZATA ---
+  // 1. Traslazione Lineare perfetta basata su s
+  Eigen::Vector3d startPos = x_0_objectStart_.translation();
+  Eigen::Vector3d targetPos = targetWaypoint.translation();
+  x_0_objectCurrent_.translation() = startPos + s * (targetPos - startPos);
+
+  // 2. Rotazione SLERP perfetta basata sullo stesso identico s
+  Eigen::Quaterniond q_start(x_0_objectStart_.rotation());
+  Eigen::Quaterniond q_target(targetWaypoint.rotation());
+  x_0_objectCurrent_.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
+
+  // Controllo fine traiettoria per questo waypoint
+  if (t_norm >= 1.0)
   {
-    x_0_objectCurrent_.translation() += errorPos * (maxStep / dist);
-  }
-  else
-  {
-    x_0_objectCurrent_ = targetWaypoint;
-
-    // Se siamo arrivati al Waypoint 1, passiamo al Waypoint 2
     if (collaborativeWaypointIndex_ == 0)
     {
-      mc_rtc::log::success("[FSM] Waypoint 1 reached! Switching to Waypoint 2.");
+      mc_rtc::log::info("[FSM] Waypoint 1 compleded smoothly. Switching to Waypoint 2.");
       collaborativeWaypointIndex_ = 1;
+      collaborativeTime_ = 0.0;              // Resetta il tempo per il prossimo pezzo
+      x_0_objectStart_ = x_0_objectCurrent_; // La nuova partenza è dove ci troviamo ora
     }
     else
     {
-      // Log statico per evitare spam a schermo una volta finiti tutti i waypoint
-      static bool printedOnce = false;
-      if (!printedOnce)
-      {
-        mc_rtc::log::success("[FSM] All Collaborative Waypoints reached. Holding position.");
-        printedOnce = true;
-      }
+      // Traiettoria finita, mantieni l'ultimo target stabile
+      x_0_objectCurrent_ = targetWaypoint;
     }
   }
 
-  // 3. Aggiornamento dei target di impedenza preservando la cinematica rigida dell'oggetto
-  leftImpedanceTask_->targetPose(leftOffset_ * x_0_objectCurrent_);
-  rightImpedanceTask_->targetPose(rightOffset_ * x_0_objectCurrent_);
+  // =========================================================================
+  // 4. GENERAZIONE TARGET PER I MANIPOLATORI
+  // =========================================================================
+  const auto &envFrame = robots().env().frame("ground");
+
+  sva::PTransformd X_0_leftEETarget = leftOffset_ * x_0_objectCurrent_;
+  sva::PTransformd X_0_rightEETarget = rightOffset_ * x_0_objectCurrent_;
+
+  leftImpedanceTask_->targetFrame(envFrame, X_0_leftEETarget);
+  rightImpedanceTask_->targetFrame(envFrame, X_0_rightEETarget);
 }
 // ==========================================
 // MAIN REAL-TIME LOOP
