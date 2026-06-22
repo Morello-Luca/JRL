@@ -36,6 +36,26 @@ DualArmControl::DualArmControl(
   currentState_ = &DualArmControl::stateNoOp;
 }
 
+// =========================================================================
+// Extract impedance gain setup
+// INITIALIZATION OF IMPEDANCE GAINS (M, D, K matrices)
+// =========================================================================
+
+void DualArmControl::configureImpedanceGains()
+{
+  massGains = Eigen::Vector6d::Constant(1.0);
+  springGains = Eigen::Vector6d::Constant(200.0);
+  damperGains = 2.0 * springGains.cwiseProduct(massGains).cwiseSqrt();
+  wrenchGains = Eigen::Vector6d::Constant(1.0);
+
+  forBothImpedanceTasks([&](auto &task)
+                        {
+    task->gains().mass().vec(massGains);
+    task->gains().spring().vec(springGains);
+    task->gains().damper().vec(damperGains);
+    task->gains().wrench().vec(wrenchGains); });
+}
+
 void DualArmControl::reset(const mc_control::ControllerResetData &resetData)
 {
   mc_control::MCController::reset(resetData);
@@ -44,9 +64,8 @@ void DualArmControl::reset(const mc_control::ControllerResetData &resetData)
   leftRobotIndex_ = robots().robotIndex("xarm7");
   rightRobotIndex_ = robots().robotIndex("xarm7_2");
 
-  // =========================================================================
   // ALLOCAZIONE TASK (Zero memory jitter nel loop real-time)
-  // =========================================================================
+  // --------------------------------------------------------------
   rightPostureTask_ = std::make_shared<mc_tasks::PostureTask>(solver(), rightRobotIndex_, 1.0, 0.1);
   solver().addTask(rightPostureTask_);
 
@@ -56,56 +75,9 @@ void DualArmControl::reset(const mc_control::ControllerResetData &resetData)
   leftImpedanceTask_ = std::make_shared<mc_tasks::force::ImpedanceTask>(eeName_, robots(), leftRobotIndex_, 1.0, 100.0);
   rightImpedanceTask_ = std::make_shared<mc_tasks::force::ImpedanceTask>(eeName_, robots(), rightRobotIndex_, 1.0, 100.0);
 
-  // =========================================================================
-  // INITIALIZATION OF IMPEDANCE GAINS (M, D, K matrices)
-  // =========================================================================
-  massGains = Eigen::Vector6d::Constant(1.0);     // Virtual Mass (kg / kg*m^2)
-  springGains = Eigen::Vector6d::Constant(200.0); // Virtual Stiffness (N/m)
-
-  // Analytically compute critical damping: D = 2 * sqrt(K * M) to avoid oscillations
-  damperGains = 2.0 * springGains.cwiseProduct(massGains).cwiseSqrt();
-
-  // Wrench feedforward/feedback gain matrix (dimensionless scaling factor)
-  wrenchGains = Eigen::Vector6d::Constant(1.0);
-
-  // Apply gains to Left Arm Impedance Task
-  leftImpedanceTask_->gains().mass().vec(massGains);
-  leftImpedanceTask_->gains().spring().vec(springGains);
-  leftImpedanceTask_->gains().damper().vec(damperGains);
-  leftImpedanceTask_->gains().wrench().vec(wrenchGains);
-
-  // Apply gains to Right Arm Impedance Task
-  rightImpedanceTask_->gains().mass().vec(massGains);
-  rightImpedanceTask_->gains().spring().vec(springGains);
-  rightImpedanceTask_->gains().damper().vec(damperGains);
-  rightImpedanceTask_->gains().wrench().vec(wrenchGains);
-
-  // =========================================================================
-  // DESIRED CONTACT FORCE SPECIFICATION (10 N)
-  // =========================================================================
-  /*
-  The target wrench is an sva::ForceVecd(couple, force).
-  Order: [Torque_X, Torque_Y, Torque_Z, Force_X, Force_Y, Force_Z]
-
-  */
-
-  // Telemetria (Logger)
-  logger().addLogEntry("debug_LeftTask_eval_norm", [this]()
-                       { return leftEeTask_ ? leftEeTask_->eval().norm() : 0.0; });
-  logger().addLogEntry("debug_RightTask_eval_norm", [this]()
-                       { return rightEeTask_ ? rightEeTask_->eval().norm() : 0.0; });
-
-  // Interfaccia Grafica (GUI)
-  gui()->addElement({"DualArm"}, mc_rtc::gui::Transform("Object Virtual Frame", [this]() -> const sva::PTransformd &
-                                                        { return x_0_objectCurrent_; }));
-
-  // =========================================================================
-  // ENHANCED TELEMETRY (Structured under error_dual)
-  // =========================================================================
-  leftForceError_ = Eigen::Vector6d::Zero();
-  rightForceError_ = Eigen::Vector6d::Zero();
-  objectPosError_ = Eigen::Vector3d::Zero();
-  objectOriError_ = 0.0;
+  // Gains
+  // --------------------------------------------------------------
+  configureImpedanceGains();
 
   // Inizio della FSM (Macchina a Stati)
   transitionTo(&DualArmControl::entryStateIdle, &DualArmControl::stateIdle);
@@ -197,126 +169,67 @@ void DualArmControl::stateIndependent()
 // =========================================================================
 // STATO 3: COLLABORATIVE (Manipolazione Oggetto Virtuale)
 // =========================================================================
-void DualArmControl::entryStateCollaborative()
+
+GraspFrame DualArmControl::buildGraspFrame() const
 {
-  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (Single Unified Smooth Trajectory).");
+  const auto X_left = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
+  const auto X_right = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
 
-  const sva::PTransformd X_0_leftEE = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
-  const sva::PTransformd X_0_rightEE = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
-
-  // =====================================================
-  // BUILD GRASP FRAME
-  // =====================================================
-  const Eigen::Vector3d pL = X_0_leftEE.translation();
-  const Eigen::Vector3d pR = X_0_rightEE.translation();
+  const Eigen::Vector3d pL = X_left.translation();
+  const Eigen::Vector3d pR = X_right.translation();
   const Eigen::Vector3d center = 0.5 * (pL + pR);
 
   Eigen::Vector3d x = (pR - pL).normalized();
   Eigen::Vector3d z = Eigen::Vector3d::UnitZ();
   if (std::abs(x.dot(z)) > 0.95)
     z = Eigen::Vector3d::UnitY();
+
   Eigen::Vector3d y = z.cross(x).normalized();
   z = x.cross(y).normalized();
 
-  Eigen::Matrix3d Robj;
-  Robj.col(0) = x;
-  Robj.col(1) = y;
-  Robj.col(2) = z;
+  Eigen::Matrix3d R;
+  R.col(0) = x;
+  R.col(1) = y;
+  R.col(2) = z;
 
-  x_0_objectCurrent_ = sva::PTransformd(Eigen::Quaterniond(Robj), center);
-  x_0_objectStart_ = x_0_objectCurrent_;
+  sva::PTransformd object(Eigen::Quaterniond(R), center);
+  return {
+      object,
+      X_left * object.inv(),
+      X_right * object.inv(),
+      X_left,
+      X_right};
+}
 
-  // =====================================================
-  // CORRECTED RIGID OFFSETS (Transform composition order)
-  // =====================================================
-  leftOffset_ = X_0_leftEE * x_0_objectCurrent_.inv();
-  rightOffset_ = X_0_rightEE * x_0_objectCurrent_.inv();
+void DualArmControl::registerCollaborativeLogs()
+{
+  if (logsRegistered_)
+    return;
+  logsRegistered_ = true;
 
-  // Define target position
-  x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(Robj), Eigen::Vector3d(0.50, 0.0, 0.09));
-
-  collaborativeTime_ = 0.0;
-  totalTrajectoryDuration_ = 6.0;
-
-  /*
-  // =====================================================
-  // RESET AND ADD IMPEDANCE TASKS
-  // =====================================================
-  // Crucial: Reset the impedance tasks to current physical pose to clear any error buffers
-  leftImpedanceTask_->reset();
-  rightImpedanceTask_->reset();
-
-  // =========================================================================
-  // SMOOTH ADMITTANCE INITIALIZATION
-  // =========================================================================
-  // Rotational components (first 3) can remain relatively firm
-  massGains.head<3>() = Eigen::Vector3d::Constant(1.0);
-  springGains.head<3>() = Eigen::Vector3d::Constant(100.0);
-
-  // Linear components (last 3) made heavy and soft for impact absorption
-  massGains.tail<3>() = Eigen::Vector3d::Constant(4.0);    // Higher inertia (kg)
-  springGains.tail<3>() = Eigen::Vector3d::Constant(30.0); // Softer spring (N/m)
-
-  // Critically damped calculation
-  damperGains = 2.0 * springGains.cwiseProduct(massGains).cwiseSqrt();
-
-  // Dimensionless wrench scaling
-  wrenchGains = Eigen::Vector6d::Constant(1.0);
-
-  // Apply to tasks
-  leftImpedanceTask_->gains().mass().vec(massGains);
-  leftImpedanceTask_->gains().spring().vec(springGains);
-  leftImpedanceTask_->gains().damper().vec(damperGains);
-  leftImpedanceTask_->gains().wrench().vec(wrenchGains);
-  leftImpedanceTask_->cutoffPeriod(0.02); // Smooth out sensor spikes
-
-  rightImpedanceTask_->gains().mass().vec(massGains);
-  rightImpedanceTask_->gains().spring().vec(springGains);
-  rightImpedanceTask_->gains().damper().vec(damperGains);
-  rightImpedanceTask_->gains().wrench().vec(wrenchGains);
-  rightImpedanceTask_->cutoffPeriod(0.02);
-  */
-
-  sva::ForceVecd targetWrench(Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, -15.0));
-
-  // Set initial targets explicitly to current poses before loop starts
-  leftImpedanceTask_->targetPose(X_0_leftEE);
-  rightImpedanceTask_->targetPose(X_0_rightEE);
-  leftImpedanceTask_->targetWrench(targetWrench);
-  rightImpedanceTask_->targetWrench(targetWrench);
-
-  solver().addTask(leftImpedanceTask_);
-  solver().addTask(rightImpedanceTask_);
-
-  leftForceError_ = leftImpedanceTask_->targetWrench().vector() - leftImpedanceTask_->measuredWrench().vector();
-  rightForceError_ = rightImpedanceTask_->targetWrench().vector() - rightImpedanceTask_->measuredWrench().vector();
-
-  // 1. Task Position/Pose Errors for both arms
   logger().addLogEntry("error_dual_left_arm_pose_norm", [this]()
                        { return leftImpedanceTask_ ? leftImpedanceTask_->eval().norm() : 0.0; });
+
   logger().addLogEntry("error_dual_right_arm_pose_norm", [this]()
                        { return rightImpedanceTask_ ? rightImpedanceTask_->eval().norm() : 0.0; });
 
-  // 2. Object Translational Error
   logger().addLogEntry("error_dual_object_translation_norm", [this]()
                        { return objectPosError_.norm(); });
 
-  // 3. Force Errors for both arms (Explicit X, Y, Z components to block joint auto-mapping)
   logger().addLogEntry("error_dual_left_arm_force_X", [this]()
-                       { return leftForceError_(3).norm(); });
+                       { return std::abs(leftForceError_(3)); });
   logger().addLogEntry("error_dual_left_arm_force_Y", [this]()
-                       { return leftForceError_(4).norm(); });
+                       { return std::abs(leftForceError_(4)); });
   logger().addLogEntry("error_dual_left_arm_force_Z", [this]()
-                       { return leftForceError_(5).norm(); });
+                       { return std::abs(leftForceError_(5)); });
 
   logger().addLogEntry("error_dual_right_arm_force_X", [this]()
-                       { return rightForceError_(3).norm(); });
+                       { return std::abs(rightForceError_(3)); });
   logger().addLogEntry("error_dual_right_arm_force_Y", [this]()
-                       { return rightForceError_(4).norm(); });
+                       { return std::abs(rightForceError_(4)); });
   logger().addLogEntry("error_dual_right_arm_force_Z", [this]()
-                       { return rightForceError_(5).norm(); });
+                       { return std::abs(rightForceError_(5)); });
 
-  // 4. Torque Errors for both arms (Optional: components 0, 1, 2)
   logger().addLogEntry("error_dual_left_arm_torque_X", [this]()
                        { return leftForceError_(0); });
   logger().addLogEntry("error_dual_left_arm_torque_Y", [this]()
@@ -332,13 +245,57 @@ void DualArmControl::entryStateCollaborative()
                        { return rightForceError_(2); });
 }
 
+void DualArmControl::entryStateCollaborative()
+{
+  mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (Single Unified Smooth Trajectory).");
+
+  // BUILD GRASP FRAME
+  //------------------------------------------
+
+  auto grasp = buildGraspFrame();
+
+  x_0_objectCurrent_ = grasp.object;
+  x_0_objectStart_ = grasp.object;
+
+  leftOffset_ = grasp.leftOffset;
+  rightOffset_ = grasp.rightOffset;
+
+  x_0_objectWaypoint1_ =
+      sva::PTransformd(
+          Eigen::Quaterniond(grasp.object.rotation()),
+          Eigen::Vector3d(0.50, 0.0, 0.09));
+
+  collaborativeTime_ = 0.0;
+  totalTrajectoryDuration_ = 6.0;
+
+  // CONTACT FORCES
+  //------------------------------------------
+  sva::ForceVecd targetWrench(Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, -15.0));
+
+  // Set initial targets explicitly to current poses before loop starts
+  leftImpedanceTask_->targetPose(grasp.leftEE);
+  rightImpedanceTask_->targetPose(grasp.rightEE);
+  leftImpedanceTask_->targetWrench(targetWrench);
+  rightImpedanceTask_->targetWrench(targetWrench);
+
+  solver().addTask(leftImpedanceTask_);
+  solver().addTask(rightImpedanceTask_);
+
+  leftForceError_ = leftImpedanceTask_->targetWrench().vector() - leftImpedanceTask_->measuredWrench().vector();
+  rightForceError_ = rightImpedanceTask_->targetWrench().vector() - rightImpedanceTask_->measuredWrench().vector();
+
+  registerCollaborativeLogs();
+}
+
 void DualArmControl::stateCollaborative()
 {
   collaborativeTime_ += timeStep;
   double t_norm = std::min(1.0, collaborativeTime_ / totalTrajectoryDuration_);
 
   // Smooth quintic profile
-  double s = 10.0 * std::pow(t_norm, 3) - 15.0 * std::pow(t_norm, 4) + 6.0 * std::pow(t_norm, 5);
+  const double t2 = t_norm * t_norm;
+  const double t3 = t2 * t_norm;
+  const double s = t3 * (10.0 + t_norm * (-15.0 + 6.0 * t_norm));
 
   Eigen::Vector3d startPos = x_0_objectStart_.translation();
   Eigen::Vector3d targetPos = x_0_objectWaypoint1_.translation();

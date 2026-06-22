@@ -5,16 +5,6 @@
 #include <mc_tasks/PostureTask.h>
 #include <mc_tasks/ImpedanceTask.h>
 
-struct GraspFrame
-{
-  sva::PTransformd object;
-  sva::PTransformd leftOffset;
-  sva::PTransformd rightOffset;
-
-  sva::PTransformd leftEE;
-  sva::PTransformd rightEE;
-};
-
 class DualArmControl : public mc_control::MCController
 {
 public:
@@ -42,23 +32,6 @@ private:
 
   void entryStateCollaborative();
   void stateCollaborative();
-  void offsetCalc();
-
-  void registerCollaborativeLogs();
-
-  void configureImpedanceGains();
-
-  GraspFrame buildGraspFrame() const;
-  // =========================================================================
-  // Apply the same operation to both arms
-  // =========================================================================
-
-  template <typename F>
-  void forBothImpedanceTasks(F &&f)
-  {
-    f(leftImpedanceTask_);
-    f(rightImpedanceTask_);
-  }
 
   // 2. ==========================================================
   // PRE-ALLOCATED TASK POINTERS (Fixed naming to match .cpp)
@@ -72,7 +45,6 @@ private:
   // 3. ==========================================================
   // STATE MEMBER VARIABLES (Fixed lowercase 'x' to match .cpp)
   // ==========================================================
-
   sva::PTransformd x_0_objectCurrent_;
   sva::PTransformd leftOffset_;
   sva::PTransformd rightOffset_;
@@ -93,11 +65,20 @@ private:
 
   double iDist = 0.05;
   double sDist = 0.01;
-  double collaborativeTime_ = 0.0;
-  double totalTrajectoryDuration_ = 5.0;
-  sva::PTransformd x_0_objectStart_;
 
   // 5. ==========================================================
+  // INTERNAL FORCE FORMULATION
+  // ==========================================================
+  Eigen::Vector3d rL_;
+  Eigen::Vector3d rR_;
+  Eigen::Matrix<double, 6, 6> G_;      // Matrice G 6x6
+  Eigen::Matrix<double, 6, 6> G_pinv_; // Pseudo-inversa 6x6
+  Eigen::MatrixXd N_;
+  Eigen::Matrix<double, 6, 1> w_obj_;
+
+  static Eigen::Matrix3d skew(const Eigen::Vector3d &r);
+  Eigen::Matrix<double, 6, 6> computePseudoInverseG(const Eigen::Matrix<double, 6, 6> &G, Eigen::MatrixXd &N);
+  // 4. ==========================================================
   // IMPEDANCE GAINS (M, D, K matrices)
   // ==========================================================
   Eigen::Vector6d massGains;   // Virtual Mass (kg / kg*m^2)
@@ -106,15 +87,4 @@ private:
   Eigen::Vector6d damperGains;
   // Wrench feedforward/feedback gain matrix (dimensionless scaling factor)
   Eigen::Vector6d wrenchGains;
-
-  // 6. ==========================================================
-  // logging
-  // ==========================================================
-
-  Eigen::Vector3d objectPosError_ = Eigen::Vector3d::Zero();
-  double objectOriError_ = 0.0;
-  Eigen::Vector6d leftForceError_ = Eigen::Vector6d::Zero();
-  Eigen::Vector6d rightForceError_ = Eigen::Vector6d::Zero();
-
-  bool logsRegistered_ = false;
 };
