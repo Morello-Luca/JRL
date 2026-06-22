@@ -287,10 +287,16 @@ void DualArmControl::entryStateCollaborative()
   registerCollaborativeLogs();
 }
 
-void DualArmControl::stateCollaborative()
+// Helper: Computes the smoothly interpolated desired object pose
+sva::PTransformd DualArmControl::computeDesiredObjectPose()
 {
   collaborativeTime_ += timeStep;
   double t_norm = std::min(1.0, collaborativeTime_ / totalTrajectoryDuration_);
+
+  if (t_norm >= 1.0)
+  {
+    return x_0_objectWaypoint1_;
+  }
 
   // Smooth quintic profile
   const double t2 = t_norm * t_norm;
@@ -300,46 +306,49 @@ void DualArmControl::stateCollaborative()
   Eigen::Vector3d startPos = x_0_objectStart_.translation();
   Eigen::Vector3d targetPos = x_0_objectWaypoint1_.translation();
 
-  // 1. Declare and compute the desired state of your virtual object frame
-  sva::PTransformd x_0_objectDesired = x_0_objectCurrent_;
-  x_0_objectDesired.translation() = startPos + s * (targetPos - startPos);
+  sva::PTransformd desiredPose = x_0_objectCurrent_;
+  desiredPose.translation() = startPos + s * (targetPos - startPos);
 
   Eigen::Quaterniond q_start(x_0_objectStart_.rotation());
   Eigen::Quaterniond q_target(x_0_objectWaypoint1_.rotation());
-  x_0_objectDesired.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
+  desiredPose.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
 
-  if (t_norm >= 1.0)
-  {
-    x_0_objectDesired = x_0_objectWaypoint1_;
-  }
+  return desiredPose;
+}
 
-  // Update the class variable for the GUI element to render
-  x_0_objectCurrent_ = x_0_objectDesired;
+// Helper: Updates error tracking and telemetry data
+void DualArmControl::updateTelemetry(const sva::PTransformd &objectDesired)
+{
+  const auto &leftRobot = robots().robot(leftRobotIndex_);
+  const auto &rightRobot = robots().robot(rightRobotIndex_);
 
-  // 2. Fetch current physical End-Effector states to calculate object center estimation
-  const sva::PTransformd X_0_leftEE = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
-  const sva::PTransformd X_0_rightEE = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
+  const sva::PTransformd X_0_leftEE = leftRobot.bodyPosW(eeName_);
+  const sva::PTransformd X_0_rightEE = rightRobot.bodyPosW(eeName_);
 
-  // Declare actualObjectCenter locally to resolve the compilation error
   Eigen::Vector3d actualObjectCenter = 0.5 * (X_0_leftEE.translation() + X_0_rightEE.translation());
 
-  // 3. Compute and store telemetry data for the logger hooks
-  objectPosError_ = x_0_objectDesired.translation() - actualObjectCenter;
-
-  Eigen::Matrix3d R_error = x_0_objectDesired.rotation() * X_0_leftEE.rotation().transpose();
+  // Position and orientation errors
+  objectPosError_ = objectDesired.translation() - actualObjectCenter;
+  Eigen::Matrix3d R_error = objectDesired.rotation() * X_0_leftEE.rotation().transpose();
   objectOriError_ = Eigen::AngleAxisd(R_error).angle();
 
+  // Force errors
   leftForceError_ = leftImpedanceTask_->targetWrench().vector() - leftImpedanceTask_->measuredWrench().vector();
   rightForceError_ = rightImpedanceTask_->targetWrench().vector() - rightImpedanceTask_->measuredWrench().vector();
+}
 
-  // =====================================================
-  // POSITION COMPOSITION FOR IMPEDANCE TARGETS
-  // =====================================================
-  sva::PTransformd X_0_leftEETarget = leftOffset_ * x_0_objectCurrent_;
-  sva::PTransformd X_0_rightEETarget = rightOffset_ * x_0_objectCurrent_;
+// Main State Function
+void DualArmControl::stateCollaborative()
+{
+  // 1. Trajectory generation
+  x_0_objectCurrent_ = computeDesiredObjectPose();
 
-  leftImpedanceTask_->targetPose(X_0_leftEETarget);
-  rightImpedanceTask_->targetPose(X_0_rightEETarget);
+  // 2. Telemetry and logging
+  updateTelemetry(x_0_objectCurrent_);
+
+  // 3. Position composition for individual impedance targets
+  leftImpedanceTask_->targetPose(leftOffset_ * x_0_objectCurrent_);
+  rightImpedanceTask_->targetPose(rightOffset_ * x_0_objectCurrent_);
 }
 
 bool DualArmControl::run()
