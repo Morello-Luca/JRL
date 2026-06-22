@@ -45,8 +45,10 @@ private:
   void offsetCalc();
 
   void registerCollaborativeLogs();
+  void updateTelemetry(const sva::PTransformd &objectDesired);
 
   void configureImpedanceGains();
+  sva::PTransformd computeDesiredObjectPose();
 
   GraspFrame buildGraspFrame() const;
   // =========================================================================
