@@ -142,12 +142,14 @@ void DualArmControl::entryStateCollaborative(){
        leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
        rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
        // Attiviamo i task di impedenza nel solutore QP
-       gains.springGains << 10.0, 10.0, 10.0, 40.0, 40.0, 1.0;
+       gains.springGains << 10.0, 10.0, 10.0, 40.0, 40.0, 2.0;
        gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0;
        
        setImpedanceGains(gains.springGains, gains.springGains, gains.wrenchGains, 4);
        solver().addTask(leftImpedanceTask_);
        solver().addTask(rightImpedanceTask_);
+       rampTime = 8.0; 
+       lambdaStart = 0;
 
        spd(5) = 0.01;
        speedLeftConstr_->addBoundedSpeed(solver(),eeName_,Eigen::Vector3d::Zero(),dof,-spd,spd);
@@ -159,9 +161,11 @@ void DualArmControl::entryStateCollaborative(){
 }
 void DualArmControl::stateCollaborative(){
        // Incrementiamo il timer interno ad ogni loop
+       
        switch (collabSubState_){
               case CollabSubState::BUILD_GRASP:{   
               stateTimer_ += timeStep;           
+
 
               double mLeft  = computeReflectedMassZ(leftRobotIndex_, eeName_);
               double mRight = computeReflectedMassZ(rightRobotIndex_, eeName_);
@@ -180,78 +184,37 @@ void DualArmControl::stateCollaborative(){
                      }); 
 
               const double contactThreshold = 1.7;
-              const double lostContactThreshold = 0.8;        
-              
 
+              double delta_z = spd(5) * timeStep;
 
+              forBothImpedanceTasks([&](auto &task) {
+              // Otteniamo la posa target attuale
+              sva::PTransformd targetPose = task->targetPose();
+              // Creiamo una trasformazione di sola traslazione lungo l'asse Z locale
+              sva::PTransformd localShift(Eigen::Vector3d(0.0, 0.0, delta_z));
+              // Moltiplicando a sinistra (nella convenzione SpaceVecAlg), 
+              // applichiamo lo spostamento nel frame locale dell'end-effector
+              task->targetPose(localShift * targetPose);
+              });
 
               sva::ForceVecd FL = leftImpedanceTask_->measuredWrench();
               sva::ForceVecd FR = rightImpedanceTask_->measuredWrench();
+              //double force = gains.contactForce(stateTimer_);
+              //leftImpedanceTask_ -> targetWrench(sva::ForceVecd(Eigen::Vector3d::Zero(),Eigen::Vector3d(0.0, 0.0, force)));
+              //rightImpedanceTask_-> targetWrench(sva::ForceVecd(Eigen::Vector3d::Zero(),Eigen::Vector3d(0.0, 0.0, force)));
 
 
-              double normFL = FL.force().norm();
-              double normFR = FR.force().norm();
-              bool inContact = (normFL > contactThreshold && normFR > contactThreshold);
-              double stableContact = -6.0;
-
-              if(!contactDetected_){
-                     // fase di avvicinamento: continua a spingere come prima
-                     double delta_z = spd(5) * timeStep;
-                     forBothImpedanceTasks([&](auto &task) {
-                            sva::PTransformd targetPose = task->targetPose();
-                            sva::PTransformd localShift(Eigen::Vector3d(0.0, 0.0, delta_z));
-                            task->targetPose(localShift * targetPose);
-                     });
-                     if(inContact){
-                            contactDetected_ = true;
-                            settleTimer_ = 0.0;
-                            prevFL_ = normFL;
-                            prevFR_ = normFR;
-                            
-                            leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.03));
-                            rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.03));
-
-
-leftImpedanceTask_->targetWrench(
-    sva::ForceVecd(
-        Eigen::Vector3d::Zero(),
-        Eigen::Vector3d(0.0, 0.0, stableContact)));
-
-rightImpedanceTask_->targetWrench(
-    sva::ForceVecd(
-        Eigen::Vector3d::Zero(),
-        Eigen::Vector3d(0.0, 0.0, stableContact)));
-
-
-                            mc_rtc::log::info("[FSM] Contatto rilevato, attendo assestamento...");
-                     }
-
+              if(FL.force().norm() > contactThreshold && FR.force().norm() > contactThreshold){
+                     mc_rtc::log::success("[FSM] Contact established.");
+                     mc_rtc::log::info("FL = {:.2f}, FR = {:.2f}",FL.force().norm(),FR.force().norm());
+                     // Blocca la posa attuale dei due end-effector                     
+                     leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
+                     rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
+                     stateTimer_ = 0;
+                     collabSubState_ = CollabSubState::TRAJECTORY;
               }
-              else{
-                     double dFL = std::abs(normFL - prevFL_) / timeStep;
-                     double dFR = std::abs(normFR - prevFR_) / timeStep;
-                     prevFL_ = normFL;
-                     prevFR_ = normFR;
-
-                     bool lostContact = (normFL < lostContactThreshold) || (normFR < lostContactThreshold);
-
-                     bool stable = (dFL < forceRateThreshold_) && (dFR < forceRateThreshold_);
-
-                     if(!lostContact && stable){
-                            settleTimer_ += timeStep;
-                     }
-                     if(settleTimer_ > settleDuration_){
-                            mc_rtc::log::success("[FSM] Contact established and settled.");
-                            stateTimer_ = 0;
-                            contactDetected_ = false;
-                            leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
-                            rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
-                            collabSubState_ = CollabSubState::TRAJECTORY;
-                     }
-              }
-
               break;
-       }
+              }
               case CollabSubState::TRAJECTORY:{   
                      auto grasp = buildGraspFrame();
                      x_0_objectCurrent_ = grasp.object;
@@ -265,6 +228,7 @@ rightImpedanceTask_->targetWrench(
                      currentInternalForce();
                      lambdaStart = lambdaMeasured_;
 
+
                      double roll  = M_PI/2; double pitch = 0.0; double yaw   = 0.0;
 
                      Eigen::Matrix3d R_mondo_desiderata = (
@@ -276,96 +240,69 @@ rightImpedanceTask_->targetWrench(
                      //x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(R*R_mondo_desiderata), x_0_objectStart_.translation());
                      x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectStart_.rotation()),Eigen::Vector3d(0.50, 0.0, 0.08));
                      gains.collaborativeTime_ = 0.0;                  
-                     stateTimer_ = 0.0;
-                     rampTime = 10.0,
-
+                     // Passiamo al movimento cooperativo vero e proprio
                      mc_rtc::log::info("[FSM - Collaborative] >> ===== STARTING MOVEMENTS ====");
+
                      collabSubState_ = CollabSubState::COOPERATIVE_MOTION;
               break;
               }
               case CollabSubState::COOPERATIVE_MOTION:{   
+                  
                      
-
-                     stateTimer_ += timeStep;
-                     gains.collaborativeTime_ += timeStep;
-                     double tau = std::clamp(stateTimer_ / rampTime, 0.0, 1.0);
-
-                     double s = 10*pow(tau,3)
-                            -15*pow(tau,4)
-                            + 6*pow(tau,5);
-                     
-                     gains.lambda_desired = lambdaStart + (30.0 - lambdaStart) * s;
-                     currentInternalForce();
-
-                     x_0_objectCurrent_ = computeDesiredObjectPose();
-                     // Calcola l'errore relativo dei due EE
-                            sva::PTransformd XL = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
-                            sva::PTransformd XR = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
-
-                            sx = leftOffset_ * x_0_objectCurrent_;
-                            dx = rightOffset_ * x_0_objectCurrent_;
-
-                            Eigen::Vector3d eWL = XL.translation() - sx.translation();
-                            Eigen::Vector3d eWR = XR.translation() - dx.translation();    
-                                                   
-                     // Proiettalo sull'asse di squeeze
-                            Eigen::Vector3d eLLocal = sx.rotation().transpose() * eWL;
-                            Eigen::Vector3d eRLocal = dx.rotation().transpose() * eWR;
-                            ezLeft  = eLLocal.z();
-                            ezRight = eRLocal.z();
-
-                            double leftSpr =  alpha(ezLeft , 0.02);
-                            double rightSpr = alpha(ezRight, 0.02);
+                     //double ez_left = localError.z();
+                     //double activationLeft = alpha(ez, -0.2, -0.06, 1.0);
+                     //double Kz_max = 30.0;
+                     //double KLeft = activationLeft * Kz_max;
 
 
-                            double leftWre =  beta(leftSpr,  0.5, 0.1);
-                            double rightWre = beta(rightSpr, 0.5, 0.1);
-
-
-                           // mc_rtc::log::info("ezLeft = {} | eRLocal = {}",ezLeft,ezRight);
-                           // mc_rtc::log::info("leftSpr = {:.2f} | rightSpr = {:.2f}",leftSpr,rightSpr);
-                           // mc_rtc::log::info("leftWre = {:.2f} | rightWre = {:.2f}",leftWre,rightWre);
 
                      leftImpedanceTask_->gains().spring().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,0.1));
+                     Eigen::Vector3d(30,30,0));
 
                      rightImpedanceTask_->gains().spring().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,50));
+                     Eigen::Vector3d(30,30,30));
 
                      leftImpedanceTask_->gains().damper().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,30));
+                     Eigen::Vector3d(30,30,100));
 
                      rightImpedanceTask_->gains().damper().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,30));
+                     Eigen::Vector3d(30,30,30));
 
                      leftImpedanceTask_->gains().wrench().vec(
                      Eigen::Vector3d(0,0,0),
-                     Eigen::Vector3d(0,0,0.2));
+                     Eigen::Vector3d(0,0,1));
 
                      rightImpedanceTask_->gains().wrench().vec(
                      Eigen::Vector3d(0,0,0),
-                     Eigen::Vector3d(0,0,0.2));
+                     Eigen::Vector3d(0,0,0.05));
 
-                     Eigen::VectorXd wLMotion = Eigen::VectorXd::Ones(6);
-                     Eigen::VectorXd wRMotion = Eigen::VectorXd::Ones(6);
-                     wRMotion(5) = 1; 
-                     wLMotion(5) = 1;             
-                     rightImpedanceTask_->dimWeight(wRMotion);
-                     leftImpedanceTask_->dimWeight(wLMotion);                     
+                     Eigen::VectorXd wMotion = Eigen::VectorXd::Ones(6);
+                     rightImpedanceTask_->dimWeight(wMotion);
+                     wMotion(5) = 0.02;              // squeeze axis: quasi disattivato per il termine di posizione/traiettoria
+                     leftImpedanceTask_->dimWeight(wMotion);
                      
-                     gains.massGains = Eigen::Vector6d::Constant(1);   
+                     
+                     gains.massGains = Eigen::Vector6d::Constant(1);
+                     //gains.damperGains =  2.0 * gains.springGains.cwiseProduct(gains.massGains).cwiseSqrt();
+                     //gains.damperGains(5) = 200;
+                     //gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0.01;           
                      forBothImpedanceTasks([&](auto &task){
                             task->gains().mass().vec(gains.massGains);
                      });  
+                     //updateContactForces();
+                     optimize();
+                     //if (std::abs(gains.lambda_desired - lambdaMeasured_) < 2){
+                     //       gains.collaborativeTime_ += timeStep;
+                    // }
+                     gains.collaborativeTime_ += timeStep;
+                     x_0_objectCurrent_ = computeDesiredObjectPose();
 
-                     optimize(gains.lambda_desired);
-
-                     leftImpedanceTask_->targetPose(sx);
-                     rightImpedanceTask_->targetPose(dx);
+                     leftImpedanceTask_->targetPose(leftOffset_ * x_0_objectCurrent_ );
+                     rightImpedanceTask_->targetPose(rightOffset_ * x_0_objectCurrent_);
 
               break;
               }
