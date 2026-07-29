@@ -78,10 +78,10 @@ void DualArmControl::currentInternalForce(){
 }
 
 
-double DualArmControl::DemandForces(double K) const{ 
+double DualArmControl::DemandForces(double K,double Fmax) const{ 
        // 1. Get spatial velocity vectors (sva::MotionVecd) in World Frame
-       const auto & vel_L_sva = robot().bodyVelW(eeName_);
-       const auto & vel_R_sva = robot().bodyVelW(eeName_);
+const auto & vel_L_sva = robots().robot(leftRobotIndex_).bodyVelW(eeName_);
+const auto & vel_R_sva = robots().robot(rightRobotIndex_).bodyVelW(eeName_);
 
        // 2. Extract linear velocities (Vector3d)
        Eigen::Vector3d v_left = vel_L_sva.linear();
@@ -90,10 +90,20 @@ double DualArmControl::DemandForces(double K) const{
        // 3. Compute object center linear velocity
        Eigen::Vector3d v_obj = 0.5 * (v_left + v_right);
 
-       // 5. Get scalar magnitude for force demand
-       double v_mag = v_obj.norm();
 
-    return K * v_mag;
+
+// 4. Get scalar magnitude and apply deadband
+    double v_mag = v_obj.norm();
+    double deadband = 0.005; // m/s
+    double v_eff = std::max(0.0, v_mag - deadband);
+
+    // 5. Rational Soft-Saturation (Boosts small v_eff, smoothly saturates at Fmax)
+    double numerator = K * v_eff;
+    double denominator = Fmax + numerator;
+    double F_demand = Fmax * (numerator / denominator);
+    
+    return F_demand;
+    return F_demand;
 }
 
 
@@ -114,10 +124,11 @@ void DualArmControl::optimize(double forceRef) {
 
     // 1. Definiamo i parametri al volo (estratti, ad esempio, dai tuoi oggetti "gains")
     DualArmQPOptimizer::Params qpParams;
-    qpParams.alpha    = 2.0; 
-    qpParams.beta     = 0.5;
+    qpParams.alpha    = 30.0; 
+    qpParams.beta     = 10.0;
     qpParams.mu       = 0.5;              // Preso dinamicamente da mc_rtc o dal tuo robot
-    double K_demand = 0.0;
+    double K_demand = 500.0;
+    double Fmax = 10.0;
 
     qpParams.gamma_L = 0.0;              // Se > 0, penalizza la norma delle coppie del braccio sinistro
     qpParams.gamma_R = 0.0;              // Se > 0, penalizza la norma delle coppie del braccio destro
@@ -138,8 +149,11 @@ void DualArmControl::optimize(double forceRef) {
     qpInput.Pint = Eigen::Matrix<double, 12, 12>::Identity() - Gpinv_ * G_;
     qpInput.left_local_force = WL_filtered_.force();
     qpInput.right_local_force = WR_filtered_.force();
-    qpInput.F_demand = DemandForces(K_demand); // K_demand = 10.0
+    qpInput.F_demand = DemandForces(K_demand, Fmax); // K_demand = 10.0
 
+ref = std::abs(qpInput.xInput)+std::abs(qpInput.F_demand);
+
+       std::cout << "qpInput.F_demand = " << qpInput.F_demand << std::endl;
     qpInput.J_L = computeJacobian(leftRobotIndex_ , eeName_);
     qpInput.J_R = computeJacobian(rightRobotIndex_, eeName_);
 

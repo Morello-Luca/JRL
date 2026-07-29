@@ -23,7 +23,7 @@ void DualArmControl::registerCollaborativeLogs(){
               // =========================================================================
               // FORCE CONTROL
               // =========================================================================
-              addLog("InternalForce_Desired", gains.lambda_desired);
+              addLog("InternalForce_Desired", ref);
               addLog("InternalForce_Measured", meas);
               addLog("InternalForce_Error", error_internalForce);
               addLog("InternalForce_lambdaCommand", lambdaCommand_);

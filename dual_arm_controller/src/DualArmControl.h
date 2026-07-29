@@ -346,7 +346,7 @@ double computeReflectedMassZ(unsigned int robotIndex,
                              const std::string & eeName);
 
 
-double meas;
+double meas =0.0;
 Eigen::Matrix<double, 12, 1> n_s;
 Eigen::Matrix<double, 12, 1> n_squeeze;
 
@@ -359,7 +359,7 @@ Eigen::VectorXd spd = Eigen::VectorXd::Zero(6);
 //==================================
 // optimal control loop
 
-double DemandForces(double K) const;
+double DemandForces(double K,double Fmax) const;
 double demandforce=0;
 
 
@@ -391,8 +391,18 @@ double settleTimer_ = 0.0;
 double prevFL_ = 0.0, prevFR_ = 0.0;
 double forceRateThreshold_ = 5.0; double settleDuration_ = 3.0; 
 
+double ref=0.0;
 
-
-
+bool squeezeForceReached_=false;
+double squeezeStableCounter_ = 0;
 Eigen::MatrixXd computeJacobian(unsigned int robotIndex, const std::string & eeName) const;
 };
+
+
+
+                     
+                     
+
+
+
+

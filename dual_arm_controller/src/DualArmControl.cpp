@@ -265,6 +265,8 @@ rightImpedanceTask_->targetWrench(
                      currentInternalForce();
                      lambdaStart = lambdaMeasured_;
 
+
+
                      double roll  = M_PI/2; double pitch = 0.0; double yaw   = 0.0;
 
                      Eigen::Matrix3d R_mondo_desiderata = (
@@ -274,7 +276,7 @@ rightImpedanceTask_->targetWrench(
                      ).toRotationMatrix();
 
                      //x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(R*R_mondo_desiderata), x_0_objectStart_.translation());
-                     x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectStart_.rotation()),Eigen::Vector3d(0.50, 0.0, 0.08));
+                     x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectStart_.rotation()),Eigen::Vector3d(0.50, 0.25, 0.2));
                      gains.collaborativeTime_ = 0.0;                  
                      stateTimer_ = 0.0;
                      rampTime = 10.0,
@@ -286,18 +288,36 @@ rightImpedanceTask_->targetWrench(
               case CollabSubState::COOPERATIVE_MOTION:{   
                      
 
-                     stateTimer_ += timeStep;
-                     gains.collaborativeTime_ += timeStep;
-                     double tau = std::clamp(stateTimer_ / rampTime, 0.0, 1.0);
 
-                     double s = 10*pow(tau,3)
-                            -15*pow(tau,4)
-                            + 6*pow(tau,5);
-                     
-                     gains.lambda_desired = lambdaStart + (30.0 - lambdaStart) * s;
                      currentInternalForce();
 
-                     x_0_objectCurrent_ = computeDesiredObjectPose();
+                     if(!squeezeForceReached_){
+                            gains.lambda_desired = 30.0;
+                            if(std::abs(meas - 30.0) < 0.6){
+                                   ++squeezeStableCounter_;
+                                   if(squeezeStableCounter_ > 2){
+                                          squeezeForceReached_ = true;
+                                          stateTimer_ = 0.0;
+                                          leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,1));
+                                          rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,1));
+                                   }
+
+                                   leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.02));
+                                   rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.02));
+                            }
+                            else{
+                                   squeezeStableCounter_ = 0;
+                            }    
+                            x_0_objectCurrent_ = computeDesiredObjectPose();
+                     
+                     }
+                     else{
+                            stateTimer_ += timeStep;
+                            gains.collaborativeTime_ += timeStep;
+                            x_0_objectCurrent_ = computeDesiredObjectPose();
+                     }
+
+
                      // Calcola l'errore relativo dei due EE
                             sva::PTransformd XL = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
                             sva::PTransformd XR = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
@@ -328,27 +348,21 @@ rightImpedanceTask_->targetWrench(
 
                      leftImpedanceTask_->gains().spring().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,0.1));
+                     Eigen::Vector3d(100,100,1.0));
 
                      rightImpedanceTask_->gains().spring().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,50));
+                     Eigen::Vector3d(100,100,1.0));
 
                      leftImpedanceTask_->gains().damper().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,30));
+                     Eigen::Vector3d(100,100,40));
 
                      rightImpedanceTask_->gains().damper().vec(
                      Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,30));
+                     Eigen::Vector3d(100,100,40));
 
-                     leftImpedanceTask_->gains().wrench().vec(
-                     Eigen::Vector3d(0,0,0),
-                     Eigen::Vector3d(0,0,0.2));
 
-                     rightImpedanceTask_->gains().wrench().vec(
-                     Eigen::Vector3d(0,0,0),
-                     Eigen::Vector3d(0,0,0.2));
 
                      Eigen::VectorXd wLMotion = Eigen::VectorXd::Ones(6);
                      Eigen::VectorXd wRMotion = Eigen::VectorXd::Ones(6);
@@ -362,7 +376,7 @@ rightImpedanceTask_->targetWrench(
                             task->gains().mass().vec(gains.massGains);
                      });  
 
-                     optimize(gains.lambda_desired);
+                     optimize(30);
 
                      leftImpedanceTask_->targetPose(sx);
                      rightImpedanceTask_->targetPose(dx);

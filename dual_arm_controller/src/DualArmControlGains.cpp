@@ -36,7 +36,7 @@ void DualArmControl::configureGains(){
        // =========================================================================
        // OBJECT TRAJECTORY TIME
        // ========================================================================= 
-       gains.totalTrajectoryDuration_ = 5.0;
+       gains.totalTrajectoryDuration_ = 10.0;
 
 
 }
