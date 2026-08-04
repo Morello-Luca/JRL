@@ -167,7 +167,7 @@ private:
  void currentInternalForce();
 
   void filtering();
-  sva::PTransformd computeDesiredObjectPose();
+  sva::PTransformd computeDesiredObjectPose(sva::PTransformd Desired, sva::PTransformd Start);
 
   GraspFrame buildGraspFrame();
   // =========================================================================
@@ -206,7 +206,7 @@ Eigen::Vector3d obj;
   int collaborativeWaypointIndex_ = 0;   // Traccia il waypoint corrente (0 = Primo, 1 = Secondo)
   sva::PTransformd x_0_objectWaypoint1_{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()}; // Vecchio x_0_objectFinalWaypoint_
   sva::PTransformd x_0_objectWaypoint2_{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()};
-
+bool movingToWaypoint2_ = false;
   // 4. ==========================================================
   // CONTROLLER CONSTANTS AND UTILITIES
   // ==========================================================
@@ -349,8 +349,7 @@ double computeReflectedMassZ(unsigned int robotIndex,
 double meas =0.0;
 Eigen::Matrix<double, 12, 1> n_s;
 Eigen::Matrix<double, 12, 1> n_squeeze;
-
-
+double stateTimer__=0;
 double t_norm = 0;
 
 Eigen::VectorXd spd = Eigen::VectorXd::Zero(6);
@@ -379,7 +378,7 @@ sva::PTransformd sx{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()};
 sva::PTransformd dx{Eigen::Matrix3d::Identity(),Eigen::Vector3d::Zero()};
 
 
-double alpha(double e, double L,double k = 1);
+double alpha(double e, double L,double k = 1)const;
 
 
 double beta(double spring, double initial_value, double final_value);
@@ -395,6 +394,15 @@ double ref=0.0;
 
 bool squeezeForceReached_=false;
 double squeezeStableCounter_ = 0;
+
+bool motionStarted_ = false;
+bool motionFinished_ = false;
+
+int target_ = 1;              // 1 = sto andando verso W1, 2 = verso W2
+int w2Visits_ = 0;
+const int maxW2Visits_ = 5;
+bool cycleComplete_ = false;
+
 Eigen::MatrixXd computeJacobian(unsigned int robotIndex, const std::string & eeName) const;
 };
 

@@ -65,5 +65,11 @@ void DualArmControl::registerCollaborativeLogs(){
               logger().addLogEntry("ObjectTrajectory_Real",[this](){return Eigen::Vector3d(
                      0.5 * (robots().robot(leftRobotIndex_).bodyPosW(eeName_).translation() +
                             robots().robot(rightRobotIndex_).bodyPosW(eeName_).translation()));});
+
+logger().addLogEntry("motionStarted_",
+                     [this]() { return motionStarted_; });
+
+logger().addLogEntry("motionFinished_",
+                     [this]() { return motionFinished_; });
               //addLog("IfInactive", !(gains.lambda_desired - lambdaMeasured_ < 2));
 }

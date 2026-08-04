@@ -109,8 +109,8 @@ void DualArmControl::entryStateIndependent(){
               Eigen::Matrix3d R_left_target      = R_rot_90 * R_left_start;
               Eigen::Matrix3d R_right_target     = R_rot_90.transpose() * R_right_start;
        // 3. Crea i frame spaziali completi (Posizione + Rotazione)
-              X_0_leftTarget = sva::PTransformd(R_left_target, Eigen::Vector3d(0.50, 0.10, 0.08));
-              X_0_rightTarget = sva::PTransformd(R_right_target, Eigen::Vector3d(0.50, 0.40, 0.08));
+              X_0_leftTarget = sva::PTransformd(R_left_target, Eigen::Vector3d(0.50, 0.10, 0.1));
+              X_0_rightTarget = sva::PTransformd(R_right_target, Eigen::Vector3d(0.50, 0.40, 0.1));
        // 4. Invia i comandi contemporanei al solutore cinematico
               leftEeTask_->set_ef_pose(X_0_leftTarget);
               rightEeTask_->set_ef_pose(X_0_rightTarget);
@@ -142,7 +142,7 @@ void DualArmControl::entryStateCollaborative(){
        leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
        rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
        // Attiviamo i task di impedenza nel solutore QP
-       gains.springGains << 10.0, 10.0, 10.0, 40.0, 40.0, 1.0;
+       gains.springGains << 10.0, 10.0, 10.0, 40.0, 40.0, 0.5;
        gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0;
        
        setImpedanceGains(gains.springGains, gains.springGains, gains.wrenchGains, 4);
@@ -277,6 +277,9 @@ rightImpedanceTask_->targetWrench(
 
                      //x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(R*R_mondo_desiderata), x_0_objectStart_.translation());
                      x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectStart_.rotation()),Eigen::Vector3d(0.50, 0.25, 0.2));
+                     x_0_objectWaypoint2_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectWaypoint1_.rotation()),Eigen::Vector3d(0.50, 0.25, 0.1));
+
+                     
                      gains.collaborativeTime_ = 0.0;                  
                      stateTimer_ = 0.0;
                      rampTime = 10.0,
@@ -292,32 +295,85 @@ rightImpedanceTask_->targetWrench(
                      currentInternalForce();
 
                      if(!squeezeForceReached_){
-                            gains.lambda_desired = 30.0;
-                            if(std::abs(meas - 30.0) < 0.6){
+
+                            double tau = std::clamp(stateTimer__ / rampTime, 0.0, 1.0);
+                            double s = 10*pow(tau,3)-15*pow(tau,4)+ 6*pow(tau,5);
+                            
+                            gains.lambda_desired = lambdaStart + (30.0 - lambdaStart) * s;
+                            stateTimer__ += timeStep;
+                            
+                            leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.04));
+                            rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.04));
+                            if(std::abs(meas - 30.0) < 0.4){
                                    ++squeezeStableCounter_;
-                                   if(squeezeStableCounter_ > 2){
+                                   if(squeezeStableCounter_ > 5){
                                           squeezeForceReached_ = true;
+                                          motionStarted_ = true;
                                           stateTimer_ = 0.0;
-                                          leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,1));
-                                          rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,1));
+                                          leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.03));
+                                          rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.03));
                                    }
 
-                                   leftImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.02));
-                                   rightImpedanceTask_->gains().wrench().vec(Eigen::Vector3d(0,0,0),Eigen::Vector3d(0,0,0.02));
                             }
                             else{
                                    squeezeStableCounter_ = 0;
-                            }    
-                            x_0_objectCurrent_ = computeDesiredObjectPose();
-                     
+                            }                         
                      }
-                     else{
-                            stateTimer_ += timeStep;
-                            gains.collaborativeTime_ += timeStep;
-                            x_0_objectCurrent_ = computeDesiredObjectPose();
-                     }
+else{
+    stateTimer_ += timeStep;
+    gains.collaborativeTime_ += timeStep;
 
+    // Waypoint target corrente in base a target_
+    const sva::PTransformd & targetPose =
+        (target_ == 1) ? x_0_objectWaypoint1_ : x_0_objectWaypoint2_;
 
+    double posError = (x_0_objectCurrent_.translation() - targetPose.translation()).norm();
+
+    sva::PTransformd w0 = x_0_objectStart_;
+    sva::PTransformd w1 = targetPose;
+
+    if(!cycleComplete_ && posError < 0.005)
+    {
+        gains.collaborativeTime_ = 0.0;
+        x_0_objectStart_ = x_0_objectCurrent_;   // nuovo punto di partenza per il prossimo tratto
+
+        if(target_ == 2)
+        {
+            ++w2Visits_;
+            if(w2Visits_ >= maxW2Visits_)
+            {
+                cycleComplete_ = true;   // stop: N cicli raggiunti
+            }
+            else
+            {
+                target_ = 1;             // torna verso W1
+            }
+        }
+        else // target_ == 1, appena arrivato a W1
+        {
+            target_ = 2;                 // vai verso W2
+        }
+
+        w0 = x_0_objectStart_;
+        w1 = (target_ == 1) ? x_0_objectWaypoint1_ : x_0_objectWaypoint2_;
+    }
+
+    if(!cycleComplete_)
+    {
+        x_0_objectCurrent_ = computeDesiredObjectPose(w1, w0);
+    }
+    else
+    {
+        // resta fermo sull'ultima posa raggiunta (o gestisci qui la transizione di stato)
+        // es: transizione ad un altro CollabSubState, oppure semplicemente non aggiornare x_0_objectCurrent_
+    }
+}
+
+if(movingToWaypoint2_ &&
+   (x_0_objectCurrent_.translation() - x_0_objectWaypoint2_.translation()).norm() < 0.005)
+{
+    motionFinished_ = true;
+}
                      // Calcola l'errore relativo dei due EE
                             sva::PTransformd XL = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
                             sva::PTransformd XR = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
@@ -346,21 +402,11 @@ rightImpedanceTask_->targetWrench(
                            // mc_rtc::log::info("leftSpr = {:.2f} | rightSpr = {:.2f}",leftSpr,rightSpr);
                            // mc_rtc::log::info("leftWre = {:.2f} | rightWre = {:.2f}",leftWre,rightWre);
 
-                     leftImpedanceTask_->gains().spring().vec(
-                     Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,1.0));
+                     leftImpedanceTask_->gains().spring().vec(Eigen::Vector3d(10,10,10),Eigen::Vector3d(100,100,0.1));
+                     rightImpedanceTask_->gains().spring().vec(Eigen::Vector3d(10,10,10),Eigen::Vector3d(100,100,0.1));
 
-                     rightImpedanceTask_->gains().spring().vec(
-                     Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,1.0));
-
-                     leftImpedanceTask_->gains().damper().vec(
-                     Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,40));
-
-                     rightImpedanceTask_->gains().damper().vec(
-                     Eigen::Vector3d(10,10,10),
-                     Eigen::Vector3d(100,100,40));
+                     leftImpedanceTask_->gains().damper().vec(Eigen::Vector3d(10,10,10),Eigen::Vector3d(20,20,80));
+                     rightImpedanceTask_->gains().damper().vec(Eigen::Vector3d(10,10,10),Eigen::Vector3d(20,20,80));
 
 
 
@@ -376,7 +422,7 @@ rightImpedanceTask_->targetWrench(
                             task->gains().mass().vec(gains.massGains);
                      });  
 
-                     optimize(30);
+                     optimize(gains.lambda_desired);
 
                      leftImpedanceTask_->targetPose(sx);
                      rightImpedanceTask_->targetPose(dx);

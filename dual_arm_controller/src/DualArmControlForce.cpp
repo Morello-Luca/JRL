@@ -94,15 +94,15 @@ const auto & vel_R_sva = robots().robot(rightRobotIndex_).bodyVelW(eeName_);
 
 // 4. Get scalar magnitude and apply deadband
     double v_mag = v_obj.norm();
+    
     double deadband = 0.005; // m/s
     double v_eff = std::max(0.0, v_mag - deadband);
 
-    // 5. Rational Soft-Saturation (Boosts small v_eff, smoothly saturates at Fmax)
-    double numerator = K * v_eff;
-    double denominator = Fmax + numerator;
-    double F_demand = Fmax * (numerator / denominator);
+
+double alpha_v = alpha(v_eff, 0.02, 0.7);
+
+double F_demand = Fmax * alpha_v;
     
-    return F_demand;
     return F_demand;
 }
 
