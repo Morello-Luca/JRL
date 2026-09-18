@@ -1,0 +1,2 @@
+/home/vscode/workspace/install/lib/mc_controller/etc/BimanualControl.yaml
+/home/vscode/workspace/install/lib/mc_controller/BimanualControl.so

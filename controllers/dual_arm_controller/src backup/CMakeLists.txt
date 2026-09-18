@@ -1,0 +1,19 @@
+set(controller_SRC
+  DualArmControl.cpp
+  DualArmControlGains.cpp
+  DualArmControlForce.cpp
+  DualArmControlTrajectory.cpp
+  DualArmControlGrasp.cpp
+  DualArmControlLogging.cpp
+  DualArmControlImpact.cpp
+  ContactForceQP.cpp
+)
+
+set(controller_HDR
+  DualArmControl.h
+  ContactForceQP.h
+)
+
+add_controller(${PROJECT_NAME} ${controller_SRC} ${controller_HDR})
+set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS "-DDualArmControl_EXPORTS")
+

@@ -1,0 +1,61 @@
+\relax 
+\citation{uchiyama1988symmetric}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Motivation}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}What to prove}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-C}}Contributions}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Internal/external force decomposition and QP-based load distribution}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Friction-cone-constrained grasp/contact force optimization}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Motion and slip-adaptive grip force control}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}System Overview}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Platform and FSM}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Problem Statement}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Internal Wrench Decomposition and Squeeze Isolation}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Squeeze Subspace Isolation}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Scalar Grasp Force}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Decomposing $w$ into Fixed and Optimized Parts}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Motion-Adaptive Force Demand}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Motivation}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Velocity-Based Motion Index}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Raised-Cosine Force Scheduling}{3}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces illustrates the evolution of the activation function for different values of the shape parameter $k$. As the object begins moving, the demanded force increases smoothly from zero, gradually approaching $F_{\qopname  \relax m{max}}$ as the velocity reaches the characteristic value $L$. This smooth scheduling avoids discontinuities while providing greater grasp stability during dynamic manipulation than a constant safety-margin strategy.}}{4}{}\protected@file@percent }
+\newlabel{cosine}{{1}{4}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}QP Formulation for Squeeze Force Optimization}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Cost Function}{4}{}\protected@file@percent }
+\newlabel{eq:cost_full}{{21}{4}}
+\newlabel{eq:lambda_ref}{{22}{4}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Per-Arm Affine Torque Map}{5}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Standard QP Form Derivation}{5}{}\protected@file@percent }
+\newlabel{sec:qp_derivation}{{\mbox  {VI-C}}{5}}
+\newlabel{eq:H_full}{{33}{5}}
+\newlabel{eq:g_full}{{34}{5}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Constraints}{5}{}\protected@file@percent }
+\newlabel{sec:constraints}{{\mbox  {VI-D}}{5}}
+\newlabel{eq:friction_bound}{{35}{5}}
+\newlabel{eq:box_constraints}{{36}{6}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-E}}Final Problem}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Experimental Validation}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-A}}Platform and Protocol}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-B}}Metrics}{6}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VII-C}}Figures}{6}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Kinematic results for the object. (a) Trajectory of the object, (b) velocity profile, and (c) acceleration profile during the motion.}}{6}{}\protected@file@percent }
+\newlabel{ObjectTrajecory}{{2}{6}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces  Comparison of the desired and measured internal grasping forces for two grasping strategies. (a) Proposed force-on-demand controller, which adaptively regulates the internal grasping force of the dual-arm system, increasing it only when required to ensure grasp stability (b) Baseline constant-force controller, where a fixed internal grasping force is maintained throughout the grasping task. The desired and measured internal forces are shown for both controllers. }}{6}{}\protected@file@percent }
+\newlabel{InternalForceOnDemand}{{3}{6}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Power statistics and energy consumption for the single-cycle experiment}}{6}{}\protected@file@percent }
+\newlabel{tab:power_statistics}{{I}{6}}
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Discussion and Limitations}{6}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Object trajectory during the cyclic waypoint-following experiment. The dual-arm system repeatedly traverses between 2 Waypoints for five consecutive cycles, demonstrating repeatable trajectory tracking.}}{7}{}\protected@file@percent }
+\newlabel{ObjectTrajecoryFive}{{4}{7}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Internal force tracking during the cyclic waypoint-following experiment. The dual-arm system repeatedly moves between Waypoints 1 and 2 for five consecutive cycles. (a) Proposed force-on-demand controller, which adaptively increases the internal grasping force only when necessary to enhance grasp stability. (b) Constant-force controller, which maintains a fixed internal grasping force throughout the task. The desired and measured internal forces are shown for comparison.}}{7}{}\protected@file@percent }
+\newlabel{InternalForceOnDemandFive}{{5}{7}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Power statistics and energy consumption for the cyclic waypoint-following experiment}}{7}{}\protected@file@percent }
+\newlabel{tab:power_statistics}{{II}{7}}
+\@writefile{toc}{\contentsline {section}{\numberline {IX}Conclusion and Future Work}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {X}References}{7}{}\protected@file@percent }
+\bibstyle{IEEEtran}
+\bibdata{references}
+\bibcite{uchiyama1988symmetric}{1}
+\@writefile{toc}{\contentsline {section}{References}{8}{}\protected@file@percent }
+\gdef \@abspage@last{8}

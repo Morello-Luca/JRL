@@ -1,0 +1,307 @@
+Implementare il Pattern State classico tramite puntatore a funzione.
+Invece di usare un costrutto switch(phase_) che valuta un enum a ogni ciclo, associamo lo stato corrente a un puntatore a un metodo membro della classe.
+In C++ questo rende il codice incredibilmente pulito: la funzione run() si limiterà a eseguire "lo stato corrente" puntato, e saranno gli stati stessi a decidere quando cambiare il puntatore (cioè quando transitare).
+
+
+
+1. Modifiche nel file Header (DualArmControl.h)
+Nel tuo file header, devi definire il tipo del puntatore a funzione e la variabile che manterrà lo stato attivo. Sostituisci l'enum phase_ con questo:
+
+private:
+    // Definiamo il tipo per il puntatore a un metodo della classe che non prende argomenti e restituisce void
+    using StateMethod = void (DualArmControl::*)();
+    
+    // Il puntatore allo stato corrente
+    StateMethod currentState_ = nullptr;
+
+    // I metodi che rappresentano gli stati reali
+    void stateIdle();
+    void stateCollaborative();
+    void stateIndependent();
+
+    // Metodo helper per cambiare stato in modo sicuro
+    void transitionTo(StateMethod newState);
+
+
+2. Il file Sorgente Riscritto (DualArmControl.cpp)
+
+Ecco il codice ottimizzato con il puntatore. Nota come sono spariti gli if-else strutturali e lo switch all'interno del ciclo principale.  
+
+========================================================================-
+
+#include "DualArmControl.h"
+#include <mc_rbdyn/RobotLoader.h>
+
+DualArmControl::DualArmControl(
+    mc_rbdyn::RobotModulePtr rm,
+    double dt,
+    const mc_rtc::Configuration &config)
+    : mc_control::MCController(rm, dt, config)
+{
+  solver().addConstraintSet(contactConstraint);
+  solver().addConstraintSet(kinematicsConstraint);
+  solver().addTask(postureTask);
+  postureTask->stiffness(1.0); 
+  postureTask->weight(0.1);
+  solver().setContacts({{}});
+
+  auto xarm_module = mc_rbdyn::RobotLoader::get_robot_module("xArm7");
+  loadRobot(xarm_module, "xarm7_2");
+  robots().robot("xarm7_2").posW(sva::PTransformd(sva::RotZ(0.0), Eigen::Vector3d(0, 0.5, 0)));
+
+  addCollisions("xarm7", "xarm7_2", {{"*", "*", iDist, sDist, 0}});
+  
+  // Impostiamo lo stato iniziale
+  currentState_ = &DualArmControl::stateIdle;
+  
+  mc_rtc::log::success("DualArmControl init done");
+}
+
+void DualArmControl::reset(const mc_control::ControllerResetData &reset_data)
+{
+  mc_control::MCController::reset(reset_data);
+
+  leftRobotIndex = robots().robotIndex("xarm7");
+  rightRobotIndex = robots().robotIndex("xarm7_2");
+
+  rightPostureTask_ = std::make_shared<mc_tasks::PostureTask>(solver(), rightRobotIndex, 1.0, 1.0);
+  solver().addTask(rightPostureTask_);
+
+  logger().addLogEntry("debug_LeftTask_eval_norm", [this]() { return LeftEndEffectorTask_ ? LeftEndEffectorTask_->eval().norm() : 0.0; });
+  logger().addLogEntry("debug_RightTask_eval_norm", [this]() { return RightEndEffectorTask_ ? RightEndEffectorTask_->eval().norm() : 0.0; });
+}
+
+// ==========================================
+// GESTORE DELLE TRANSIZIONI
+// ==========================================
+void DualArmControl::transitionTo(StateMethod newState)
+{
+  if (!newState) return;
+  
+  // Reset del flag waypoint ad ogni cambio di stato
+  waypointSet_ = false; 
+  currentState_ = newState;
+}
+
+// ==========================================
+// DEFINIZIONE DEGLI STATI (METODI)
+// ==========================================
+
+void DualArmControl::stateIdle()
+{
+  // Configurazione iniziale Fase Collaborativa (Dual)
+  std::string EndEffector = "link7";
+  leftAdmittanceTask_ = std::make_shared<mc_tasks::force::AdmittanceTask>(EndEffector, robots(), leftRobotIndex, 200.0, 200);
+  rightAdmittanceTask_ = std::make_shared<mc_tasks::force::AdmittanceTask>(EndEffector, robots(), rightRobotIndex, 200.0, 200);
+
+  sva::ForceVecd admittanceGains = sva::ForceVecd::Zero();
+  admittanceGains.force().x() = 0.0005;
+  leftAdmittanceTask_->admittance(admittanceGains);
+  rightAdmittanceTask_->admittance(admittanceGains);
+
+  sva::PTransformd X_0_leftEE = robots().robot(leftRobotIndex).bodyPosW(EndEffector);
+  sva::PTransformd X_0_rightEE = robots().robot(rightRobotIndex).bodyPosW(EndEffector);
+  
+  Eigen::Vector3d middleTranslation = (X_0_leftEE.translation() + X_0_rightEE.translation()) / 2.0;
+  Eigen::Matrix3d objectRotation = robots().robot(leftRobotIndex).bodyPosW("link_base").rotation();
+  X_0_objectTarget_ = sva::PTransformd(objectRotation, middleTranslation);
+
+  leftOffset_ = X_0_leftEE * X_0_objectTarget_.inv();
+  rightOffset_ = X_0_rightEE * X_0_objectTarget_.inv();
+
+  leftAdmittanceTask_->targetPose(leftOffset_ * X_0_objectTarget_);
+  rightAdmittanceTask_->targetPose(rightOffset_ * X_0_objectTarget_);
+
+  solver().removeTask(LeftEndEffectorTask_);
+  solver().removeTask(RightEndEffectorTask_);
+  solver().addTask(leftAdmittanceTask_);
+  solver().addTask(rightAdmittanceTask_);
+
+  postureTask->stiffness(0.5);
+  rightPostureTask_->stiffness(0.5);
+
+  gui()->addElement({"DualArm"}, mc_rtc::gui::Transform("Object Virtual Frame", [this]() -> const sva::PTransformd & { return X_0_objectTarget_; }));
+
+  mc_rtc::log::success(">>> Inizio Fase Collaborativa");
+  
+  // Transizione immediata al prossimo stato operativo
+  transitionTo(&DualArmControl::stateCollaborative);
+}
+
+void DualArmControl::stateCollaborative()
+{
+  if (!waypointSet_)
+  {
+    X_0_objectTarget_.translation() = Eigen::Vector3d(0.50, 0.25, 0.09);
+    sva::MotionVecd maxVelocity(Eigen::Vector3d(0.5, 0.5, 0.5), Eigen::Vector3d(0.1, 0.1, 0.1));
+    leftAdmittanceTask_->refVelB(maxVelocity);
+    rightAdmittanceTask_->refVelB(maxVelocity);
+    waypointSet_ = true;
+  }
+
+  Eigen::Vector3d currentPos = (robots().robot(leftRobotIndex).bodyPosW("link7").translation() +
+                                robots().robot(rightRobotIndex).bodyPosW("link7").translation()) / 2.0;
+  
+  mc_rtc::log::info("Object Target Error: {} m", (currentPos - X_0_objectTarget_.translation()).norm());
+
+  leftAdmittanceTask_->targetPose(leftOffset_ * X_0_objectTarget_);
+  rightAdmittanceTask_->targetPose(rightOffset_ * X_0_objectTarget_);
+
+  // NOTA: Se qui volessi una condizione per uscire dalla fase collaborativa e tornare a quella indipendente,
+  // ti basterebbe pulire i task di ammettenza e fare:
+  // transitionTo(&DualArmControl::stateIndependent);
+}
+
+void DualArmControl::stateIndependent()
+{
+  if (!waypointSet_)
+  {
+    // Qui togliamo la roba della GUI e configuriamo i task EE (Eseguito UNA sola volta grazie a waypointSet_)
+    gui()->removeElement({"DualArm"}, "Object Virtual Frame");
+    solver().removeTask(leftAdmittanceTask_);
+    solver().removeTask(rightAdmittanceTask_);
+
+    std::string EndEffector = "link7";
+    LeftEndEffectorTask_ = std::make_shared<mc_tasks::EndEffectorTask>(EndEffector, robots(), leftRobotIndex, 1);
+    RightEndEffectorTask_ = std::make_shared<mc_tasks::EndEffectorTask>(EndEffector, robots(), rightRobotIndex, 1);
+    
+    solver().addTask(LeftEndEffectorTask_);
+    solver().addTask(RightEndEffectorTask_);
+
+    LeftEndEffectorTask_->add_ef_pose({Eigen::Vector3d(0.2, 0.2, 0.4)});
+    RightEndEffectorTask_->add_ef_pose({Eigen::Vector3d(0.2, -0.2, 0.4)});
+    
+    postureTask->stiffness(1.0);
+    rightPostureTask_->stiffness(1.0);
+    
+    waypointSet_ = true;
+  }
+
+  bool left_converged = LeftEndEffectorTask_->eval().norm() < 0.01 && LeftEndEffectorTask_->speed().norm() < 0.05;
+  bool right_converged = RightEndEffectorTask_->eval().norm() < 0.01 && RightEndEffectorTask_->speed().norm() < 0.05;
+
+  if (left_converged && right_converged)
+  {
+    mc_rtc::log::success(">>> Fine Fase Indipendente, ritorno a Idle/Collaborativa");
+    transitionTo(&DualArmControl::stateIdle); 
+  }
+}
+
+// ==========================================
+// CICLO PRINCIPALE ULTRA COMPATTO
+// ==========================================
+bool DualArmControl::run()
+{
+  // Esegue la funzione attualmente puntata da currentState_
+  (this->*currentState_)();
+
+  return mc_control::MCController::run();
+}
+
+CONTROLLER_CONSTRUCTOR("DualArmControl", DualArmControl)
+
+
+=============================================================================
+
+
+Quali sono i vantaggi di questo approccio?
+
+    Niente Switch o Condizionali nel run(): Al posto di valutare un intero albero di decisioni (if/switch) ogni 2 o 5 millisecondi (il tick di mc_rtc), la CPU salta direttamente all'indirizzo di memoria della funzione corretta. È il massimo dell'efficienza in C++.
+
+    Modularità Totale in C++: Capisco perfettamente la tua obiezione sulla FSM di mc_rtc (il file YAML può essere rigido se devi passare dinamicamente coordinate calcolate a runtime). Con questa struttura mantieni tutti i calcoli in C++, ma ogni stato è isolato.
+
+    Setup "One-Shot" Integrato: Usando l'accoppiamento tra transitionTo() (che resetta waypointSet_ = false) e il controllo if (!waypointSet_), la prima riga di ogni stato si comporta automaticamente come la funzione di "inizializzazione" di quello stato, permettendoti di allocare task o cambiare rigidità una sola volta.
+
+
+La metafora del Telecomando
+
+Immagina di avere un robot con tre pulsanti fisici sul cofano: IDLE, DUAL, e SINGLE.
+Nel codice precedente, la funzione run() (che viene eseguita continuamente in loop) si comportava così: ad ogni ciclo andava a guardare quale pulsante era premuto usando uno switch, e poi eseguiva l'azione corrispondente. È come se tu, ogni secondo, ti chiedessi: "Quale pulsante è premuto? Il due? Ok, allora premo il due". Una perdita di tempo e di spazio nel codice.
+
+Usando il puntatore, abbiamo tolto i pulsanti fisici e abbiamo dato a run() un telecomando con un solo tasto universale.
+Questo tasto non ha un'azione fissa: punta direttamente all'azione che serve in quel momento. Quando lo stato cambia, non premiamo un altro pulsante, ma riprogrammiamo il tasto del telecomando per fargli fare un'altra cosa.
+Come funziona nel codice? (Passo dopo passo)
+
+La "Riprogrammazione" (using)
+
+Nel file Header abbiamo scritto questa riga:
+
+using StateMethod = void (DualArmControl::*)();
+
+Qui stiamo dicendo al compilatore: "Crea un nuovo tipo di dato chiamato StateMethod. Una variabile di questo tipo non conterrà un numero o un testo, ma conterrà l'indirizzo di memoria di una funzione di DualArmControl che non riceve parametri e non restituisce nulla".
+
+
+2. Il Telecomando (currentState_)
+
+Poi abbiamo creato il telecomando vero e proprio:
+
+StateMethod currentState_ = nullptr;
+
+currentState_ è una variabile "guscio". Può ospitare stateIdle, stateCollaborative o stateIndependent
+
+3. Cambiare Canale (transitionTo)
+
+Quando decidi che è il momento di cambiare stato, usi la funzione di transizione:
+C++
+
+void DualArmControl::transitionTo(StateMethod newState) {
+  currentState_ = newState; // Il telecomando ora punta alla nuova funzione
+}
+
+Se scrivi transitionTo(&DualArmControl::stateCollaborative), stai dicendo al telecomando di memorizzare la posizione della funzione stateCollaborative.
+
+L'Esecuzione nel Loop (run)
+
+Questa è la riga che sostituisce tutto lo switch e gli if:
+C++
+
+(this->*currentState_)();
+
+Questa sintassi un po' strana significa letteralmente: "Prendi l'oggetto corrente (this), guarda quale funzione è memorizzata nel telecomando (*currentState_), ed eseguila subito con le parentesi ()".
+Perché questo modo è "più pulito ed efficiente"?
+
+    Zero decisioni nel loop: La CPU non deve più fare test logici (if phase == DUAL) migliaia di volte al secondo. Sa già esattamente l'indirizzo di memoria in cui saltare.
+
+    Codice blindato ed elegante: Se domani devi aggiungere uno stato stateEmergency, ti basta scrivere la funzione e far puntare il telecomando lì. Non devi toccare la funzione run(), che rimarrà per sempre di una sola riga.
+
+    Niente variabili di stato "buggate": Non c'è il rischio di dimenticare un break in uno switch o di confondere due enum diversi. O il telecomando punta a una funzione valida, o il robot non si muove.
+
+
+
+quindi non devo piu dire la fase ma tipo transitionTo(stateIdle())? 
+
+Quasi! Ci sei vicinissimo, ma c'è un piccolissimo dettaglio di sintassi C++ da correggere.
+Se scrivessi transitionTo(stateIdle()) (con le parentesi tonde), il programma cercherebbe di eseguire immediatamente la funzione stateIdle in quella riga e passerebbe il suo risultato a transitionTo. Ma a noi non serve eseguire la funzione lì sul momento, serve solo "dire dove si trova" (passare il suo indirizzo di memoria).
+La sintassi corretta in C++ richiede il simbolo & (che significa "prendi l'indirizzo di") e il nome della classe, senza le parentesi tonde:
+transitionTo(&DualArmControl::stateIdle);
+Facciamo un confronto visivo
+Per capire la differenza tra la macchina a stati classica (quella che avevi prima con l'enum e lo switch) e questo approccio con il puntatore, immagina la struttura del codice in questo modo:
+    Prima (Switch/Enum): La variabile phase_ conteneva solo un'etichetta (un numero). La funzione run() doveva ogni volta leggere l'etichetta, scorrere l'elenco dello switch e trovare la strada corretta.
+    Ora (Puntatore): La variabile currentState_ contiene direttamente la strada (l'indirizzo). La funzione run() ci clicca sopra e ci va diretta, senza fare domande.
+
+Ricapitolando: come si usa nel codice?
+
+Quando sei dentro a uno stato (ad esempio alla fine di stateIndependent) e decidi che è il momento di cambiare, scriverai semplicemente:
+
+
+if (left_converged && right_converged)
+{
+    mc_rtc::log::success("Task completati, cambio stato!");
+    
+    // CORRETTO: Passi l'indirizzo della funzione, non la esegui.
+    transitionTo(&DualArmControl::stateIdle); 
+}
+
+Al ciclo successivo, la funzione run() eseguirà automaticamente stateIdle. Più pulito di così non si può!
+
+
+
+
+
+
+
+
+
+
+
+

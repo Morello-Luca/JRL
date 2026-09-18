@@ -1,0 +1,21 @@
+Backend: TVM
+MainRobot: xArm7
+Enabled: CustomTask
+Timestep: 0.001
+
+
+
+plugins: ["ROS2"]
+
+
+LogDirectory: "/home/vscode/workspace/sandbox/controllers/dual_arm_controller/Logs"
+LogTemplate: "mc-control-InternalForceControl"
+
+robots:
+
+  box1:
+    module: "object/box"
+
+    init_pos:
+      translation: [0.2, 0.0, 0.05]
+      rotation: [0, 0, 0]

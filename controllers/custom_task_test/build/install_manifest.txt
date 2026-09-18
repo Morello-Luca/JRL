@@ -1,0 +1,2 @@
+/home/vscode/workspace/install/lib/mc_controller/etc/CustomTask.yaml
+/home/vscode/workspace/install/lib/mc_controller/CustomTask.so

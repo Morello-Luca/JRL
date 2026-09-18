@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/vscode/workspace/sandbox/controllers/my_Impedance/build/cmake_install.cmake",
+		"/home/vscode/workspace/sandbox/controllers/my_Impedance/build/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

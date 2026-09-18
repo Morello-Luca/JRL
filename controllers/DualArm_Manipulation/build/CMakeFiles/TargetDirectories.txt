@@ -1,0 +1,15 @@
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/test.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/edit_cache.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/rebuild_cache.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/list_install_components.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/install.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/install/local.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/CMakeFiles/install/strip.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/BimanualControl.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/test.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/edit_cache.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/rebuild_cache.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/list_install_components.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/install.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/install/local.dir
+/home/vscode/workspace/sandbox/controllers/DualArm_Manipulation/build/src/CMakeFiles/install/strip.dir

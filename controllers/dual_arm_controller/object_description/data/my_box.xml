@@ -1,0 +1,25 @@
+<mujoco model="my_box">
+
+  <asset>
+    <mesh name="my_box"
+          file="/usr/local/share/my_box/meshes/box/my_box.stl"/>
+  </asset>
+
+  <worldbody>
+
+    <body name="my_box" pos="0 0 0.1">
+
+      <freejoint/>
+
+      <geom 
+        name="my_box_geom"
+        type="mesh"
+        mesh="my_box"
+        rgba="1 0 0 1"
+        friction="10 10 10"/>
+
+    </body>
+
+  </worldbody>
+
+</mujoco>

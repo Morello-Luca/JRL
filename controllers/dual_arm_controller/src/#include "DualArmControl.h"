@@ -1,0 +1,519 @@
+#include "DualArmControl.h"
+#include <mc_rbdyn/RobotLoader.h>
+
+DualArmControl::DualArmControl(
+    mc_rbdyn::RobotModulePtr rm,
+    double dt,
+    const mc_rtc::Configuration &config)
+    : mc_control::MCController(rm, dt, config){
+       // Configurazione iniziale dei vincoli globali
+       solver().addConstraintSet(contactConstraint);
+       solver().addConstraintSet(kinematicsConstraint);
+
+       solver().setContacts({{}});
+       // Caricamento del secondo braccio (xArm7)
+       std::vector<std::string> loaderArgs = {"xArm7", "name", "xarm7_2"};
+       auto xarm2Module = mc_rbdyn::RobotLoader::get_robot_module(loaderArgs);
+
+       if (!xarm2Module){
+              mc_rtc::log::error_and_throw<std::runtime_error>("Failed to load xarm7_2 module!");
+       }
+
+       // Use the correctly matched variable name here
+       loadRobot(xarm2Module, "xarm7_2");
+
+       // Posizionamento del secondo braccio nello spazio cartesiano
+       robots().robot("xarm7_2").posW(sva::PTransformd(sva::RotZ(0.0), Eigen::Vector3d(0.0, 0.5, 0.0)));
+       addCollisions("xarm7", "xarm7_2", {{"*", "*", iDist, sDist, 0}});
+
+       // Stato di sicurezza iniziale (Fai nulla)
+       currentState_ = &DualArmControl::stateNoOp;
+}
+
+void DualArmControl::reset(const mc_control::ControllerResetData &resetData){
+       mc_control::MCController::reset(resetData);
+       // ROBOT INDEX
+              leftRobotIndex_ = robots().robotIndex("xarm7");
+              rightRobotIndex_ = robots().robotIndex("xarm7_2");
+
+       // TASKS MEMORY ALLOCATION
+              rightPostureTask_ = std::make_shared<mc_tasks::PostureTask>(solver(), rightRobotIndex_,    1.0, 0.1);
+              leftPostureTask_ = std::make_shared<mc_tasks::PostureTask>(solver(),  leftRobotIndex_ ,    1.0, 0.1);
+              leftPostureTask_->stiffness(0.5);
+              rightPostureTask_->stiffness(0.5);
+              mc_rtc::log::info("========================================================================");
+              mc_rtc::log::info("Backend {}", (int)solver().backend());
+              mc_rtc::log::info("========================================================================");
+
+              // Speed bound constraint
+              speedLeftConstr_ =std::make_unique<mc_solver::BoundedSpeedConstr>(robots(),leftRobotIndex_,solver().dt());
+              speedRightConstr_ =std::make_unique<mc_solver::BoundedSpeedConstr>(robots(),rightRobotIndex_,solver().dt());
+
+              
+              leftEeTask_ = std::make_shared<mc_tasks::EndEffectorTask>(eeName_, robots(), leftRobotIndex_, 1.0);
+              rightEeTask_ = std::make_shared<mc_tasks::EndEffectorTask>(eeName_, robots(), rightRobotIndex_, 1.0);
+
+              leftImpedanceTask_ = std::make_shared<mc_tasks::force::ImpedanceTask>(eeName_, robots(), leftRobotIndex_, 1.0, 100.0);
+              rightImpedanceTask_ = std::make_shared<mc_tasks::force::ImpedanceTask>(eeName_, robots(), rightRobotIndex_, 1.0, 100.0);
+       // ADD TASKS
+              solver().addTask(leftPostureTask_);
+              solver().addTask(rightPostureTask_);
+       // GAINS
+              configureGains();
+              registerCollaborativeLogs();
+
+              transitionTo(&DualArmControl::entryStateIdle, &DualArmControl::stateIdle);
+}
+
+
+#include "DualArmControl.h"
+
+void DualArmControl::filtering(){
+       // =====================================================================================
+       // 4. ALPHA-BETA FILTER (Kalman-like tracking for Position and Velocity)
+       // -------------------------------------------------------------------------------------
+       // This steady-state filter smooths the noisy force measurement (lambdaMeasured_)
+       // and estimates its first derivative (lambdaDotFiltered_) without a severe lag.
+       // Tuning Guide:
+       // - alpha_k (0 to 1): Controls position tracking. Higher = faster response but noisy.
+       //                                                 Lower  = smoother but introduces lag.
+       // - beta_k  (0 to 1): Controls velocity tracking. Higher = reactive but shaky derivative.
+       // =====================================================================================
+       smoothFilter_.alpha =   0.10;        smoothFilter_.beta  =   0.005;
+       balancedFilter_.alpha = 0.25;        balancedFilter_.beta  = 0.02;
+       fastFilter_.alpha =     0.45;        fastFilter_.beta  =     0.10;   
+
+       smoothFilter_.update(lambdaMeasured_, timeStep);
+       balancedFilter_.update(lambdaMeasured_, timeStep);
+       fastFilter_.update(lambdaMeasured_, timeStep);
+       // =====================================================================================
+       // 4.1 FIRST-ORDER LOW-PASS FILTER (for comparison only)
+       // -------------------------------------------------------------------------------------
+       // Classical first-order low-pass filter:
+       // y(k) = y(k-1) + alpha * (x(k) - y(k-1))
+       // Smaller alpha -> stronger smoothing           Larger alpha  -> faster response
+       // =====================================================================================
+       lowPass(lambdaFiltered_lowpass_moltosmooth, lambdaMeasured_, 0.05);
+       lowPass(lambdaFiltered_lowpass_smooth,      lambdaMeasured_, 0.20);
+       lowPass(lambdaFiltered_lowpass_mid,         lambdaMeasured_, 0.30);
+       lowPass(lambdaFiltered_lowpass_high,        lambdaMeasured_, 0.70);
+       double tau = 1.0 / (2.0 * M_PI * gains.cutoffPeriod);
+       double alpha_lpcut = timeStep / (tau + timeStep);
+       lowPass(lambdaFiltered_lowpass_cut, lambdaMeasured_, alpha_lpcut);
+}
+
+
+
+
+void DualArmControl::currentInternalForce(){
+       // Rotation Matrix
+              auto RL = robots().robot(leftRobotIndex_).bodyPosW(eeName_).rotation();
+              auto RR = robots().robot(rightRobotIndex_).bodyPosW(eeName_).rotation();
+       // World Frame FORCES
+              Eigen::Matrix<double, 6, 1> fL_world;
+              Eigen::Matrix<double, 6, 1> fR_world;
+              Eigen::Matrix<double, 12, 1> f_meas;
+       // Contact Force Measure
+              sva::ForceVecd WL = leftImpedanceTask_->measuredWrench();
+              sva::ForceVecd WR = rightImpedanceTask_->measuredWrench();
+              
+              fL_world.head<3>() = RL * WL.couple();
+              fL_world.tail<3>() = RL * WL.force();
+              fR_world.head<3>() = RR * WR.couple();
+              fR_world.tail<3>() = RR * WR.force();
+       // Group into one vector
+              f_meas.segment<6>(0) = fL_world;
+              f_meas.segment<6>(6) = fR_world;
+       // Null-Space Projection Matrix
+              Eigen::Matrix<double, 12, 12> Pint = Eigen::Matrix<double, 12, 12>::Identity() - Gpinv_ * G_;
+              Eigen::Matrix<double, 12, 1> internalForce = Pint * f_meas;
+
+              n_s << 0, 0, 0, 0, 1, 0,  //  Squeeze direction
+                     0, 0, 0, 0, -1, 0;
+       // Null Space projection of squeeze
+              Eigen::JacobiSVD<Eigen::MatrixXd> svd(G_, Eigen::ComputeFullV);
+              int rank = svd.rank();
+              Eigen::MatrixXd N = svd.matrixV().rightCols(G_.cols() - rank);
+              n_squeeze = N * (N.transpose() * n_s);
+              n_squeeze.stableNormalize();
+       lambdaMeasured_ = n_squeeze.transpose() * internalForce;
+       filtering();
+}
+
+void DualArmControl::updateContactForces(){
+       sva::ForceVecd target_{Eigen::Vector3d::Zero(), Eigen::Vector3d(0.0, 0.0, -gains.lambda_desired)};
+              
+       currentInternalForce();
+
+       // =====================================================================================
+       // 5. INTERNAL SQUEEZE FORCE CONTROL
+       
+       meas = lambdaFiltered_lowpass_cut;
+       error_internalForce = gains.lambda_desired - meas;
+              
+       double Ki = 2.0;                                                  // Integral gain [N/(N*s)]
+       double maxRate = 15.0;                                            // Maximum change of reference [N/s]
+       double delta = Ki * error_internalForce * timeStep;               // Increment generated by the error
+       delta = std::clamp(delta,-maxRate * timeStep,maxRate * timeStep); // Limit how fast the reference is allowed to change
+
+       lambdaCommand_ += delta;                                       // Update the reference
+       lambdaCommand_ = std::clamp(lambdaCommand_, -80.0, 80.0);      // Safety limits
+
+       // =====================================================================================
+       // 6. PROIETTA NEL WRENCH
+
+       Eigen::Matrix<double, 12, 1> f_input = n_squeeze * lambdaCommand_;
+       Eigen::Matrix<double, 6, 1> wL_world = f_input.segment<6>(0);
+       Eigen::Matrix<double, 6, 1> wR_world = f_input.segment<6>(6);
+
+       Eigen::Matrix<double, 6, 1> wL_local;
+       Eigen::Matrix<double, 6, 1> wR_local;
+       // Ricalcoliamo le rotazioni qui per trasformare i comandi in locali
+       auto RL = robots().robot(leftRobotIndex_).bodyPosW(eeName_).rotation();
+       auto RR = robots().robot(rightRobotIndex_).bodyPosW(eeName_).rotation();
+
+       wL_local.head<3>() = RL.transpose() * wL_world.head<3>();
+       wL_local.tail<3>() = RL.transpose() * wL_world.tail<3>();
+
+       wR_local.head<3>() = RR.transpose() * wR_world.head<3>();
+       wR_local.tail<3>() = RR.transpose() * wR_world.tail<3>();
+
+       cmdLeft.couple() = wL_local.head<3>();
+       cmdLeft.force()  = wL_local.tail<3>();
+
+       cmdRight.couple() = wR_local.head<3>();
+       cmdRight.force()  = wR_local.tail<3>();
+
+       // =====================================================================================
+       // 7. SEND WRENCHES
+       leftImpedanceTask_->targetWrench(cmdLeft);
+       rightImpedanceTask_->targetWrench(cmdRight);     
+}
+
+#include "DualArmControl.h"
+GraspFrame DualArmControl::buildGraspFrame(){
+       // =========================================================================
+       // SAVE END EFFECTOR POSITIONS IN WORLD FRAME
+       // =========================================================================
+              const auto X_left = robots().robot(leftRobotIndex_).bodyPosW(eeName_);
+              const auto X_right = robots().robot(rightRobotIndex_).bodyPosW(eeName_);
+              
+              const Eigen::Vector3d pL = X_left.translation();
+              const Eigen::Vector3d pR = X_right.translation();
+
+       // =========================================================================
+       // CALCULATE OBJECT FRAME
+       // =========================================================================
+              const Eigen::Vector3d center = 0.5 * (pL + pR);
+
+       // =========================================================================
+       // OFFSETS FROM CENTER TO END EFFECTORS IN WORLD FRAME
+       // =========================================================================
+              Eigen::Vector3d rL = pL - center;
+              Eigen::Vector3d rR = pR - center;
+
+       // =========================================================================
+       // BUILD GRASP FRAME 
+       // =========================================================================
+              Eigen::Vector3d x = (pR - pL).normalized();
+              Eigen::Vector3d z(0,0,1);
+              if(std::abs(x.dot(z)) > 0.99) z = Eigen::Vector3d(0,1,0);
+              Eigen::Vector3d y = z.cross(x).normalized();
+              z = x.cross(y).normalized();
+              R.col(0) = x;
+              R.col(1) = y;
+              R.col(2) = z;
+              sva::PTransformd X_world_object(R, center);
+
+       // =========================================================================
+       // POSA FRAME END EFFECTORS IN OBJECT FRAME
+       // =========================================================================
+              sva::PTransformd X_object_left = X_left * X_world_object.inv();
+              sva::PTransformd X_object_right = X_right * X_world_object.inv();
+              
+       // =========================================================================
+       // GRASP MATRIX FOR FORCE DECOUPLING
+       // =========================================================================
+              Eigen::Matrix3d I = Eigen::Matrix3d::Identity();
+              Eigen::Matrix3d skew_rL = skew(rL);
+              Eigen::Matrix3d skew_rR = skew(rR);
+              G_.setZero();
+              G_.block<3, 3>(0, 0) = I;
+              G_.block<3, 3>(0, 6) = I;
+              G_.block<3, 3>(3, 0) = skew_rL;
+              G_.block<3, 3>(3, 3) = I;
+              G_.block<3, 3>(3, 6) = skew_rR;
+              G_.block<3, 3>(3, 9) = I;
+       // =========================================================================
+       // PSEUDOINVERSE
+       // =========================================================================
+              Gpinv_.setZero();
+              Eigen::Matrix<double,6,6> M = G_ * G_.transpose();
+              Gpinv_ = G_.transpose() * M.ldlt().solve(Eigen::Matrix<double,6,6>::Identity());
+       // =========================================================================
+       // DEBUG FOR FRAMES CHECK AND PROJECTION
+       // =========================================================================
+              /*
+              mc_rtc::log::info("pL = {}", X_left.translation().transpose());
+              mc_rtc::log::info("pR = {}", X_right.translation().transpose());
+              mc_rtc::log::info("center = {}", center.transpose());
+              mc_rtc::log::info("rL(world) = {}", rL.transpose());
+              mc_rtc::log::info("rR(world) = {}", rR.transpose());
+              mc_rtc::log::info("R_object =\n{}", R);
+              mc_rtc::log::info("X_object_left.translation = {}", X_object_left.translation().transpose());
+              mc_rtc::log::info("X_object_right.translation = {}",X_object_right.translation().transpose());
+              mc_rtc::log::info("X_object_left.rotation =\n{}", X_object_left.rotation());
+              mc_rtc::log::info("X_object_right.rotation =\n{}",X_object_right.rotation());
+              */
+       return {X_world_object,X_object_left,X_object_right,X_left,X_right};
+}
+
+Eigen::Matrix3d DualArmControl::skew(const Eigen::Vector3d &r){
+       Eigen::Matrix3d m;
+       m << 0.0, -r.z(), r.y(),
+           r.z(), 0.0, -r.x(),
+           -r.y(), r.x(), 0.0;
+       return m;
+}
+
+
+sva::PTransformd DualArmControl::computeDesiredObjectPose(){
+       double t_norm = std::min(1.0, gains.collaborativeTime_ / gains.totalTrajectoryDuration_);
+       if (t_norm >= 1.0) {return x_0_objectWaypoint1_;}
+       // Smooth quintic profile
+              const double t2 = t_norm * t_norm;
+              const double t3 = t2 * t_norm;
+              const double s = t3 * (10.0 + t_norm * (-15.0 + 6.0 * t_norm));
+              Eigen::Vector3d startPos = x_0_objectStart_.translation();
+              Eigen::Vector3d targetPos = x_0_objectWaypoint1_.translation();
+              sva::PTransformd desiredPose = x_0_objectCurrent_;
+              desiredPose.translation() = startPos + s * (targetPos - startPos);
+       // slerp
+              Eigen::Quaterniond q_start(x_0_objectStart_.rotation());
+              Eigen::Quaterniond q_target(x_0_objectWaypoint1_.rotation());
+       // compose
+              desiredPose.rotation() = q_start.slerp(s, q_target).toRotationMatrix();
+       return desiredPose;
+}
+
+// =========================================================================
+// TRANSITIONS MANAGER
+// =========================================================================
+void DualArmControl::transitionTo(StateMethod entryMethod, StateMethod runMethod){
+       if (!entryMethod || !runMethod)
+              return;
+       stateTimer_ = 0.0; // Reset deterministico del tempo ad ogni cambio stato
+       (this->*entryMethod)();    // Esecuzione immediata del setup dello stato
+       currentState_ = runMethod; // Switch del puntatore per i cicli successivi
+}
+// =========================================================================
+// STATO 1: IDLE
+// =========================================================================
+void DualArmControl::entryStateIdle(){
+       currentFsmState_ = FSMState::IDLE;
+       mc_rtc::log::info("[FSM] Entering IDLE Phase (Holding for 3.0 seconds)...");
+}
+void DualArmControl::stateIdle(){
+       stateTimer_ += timeStep;
+       if (stateTimer_ >= 3.0){
+              mc_rtc::log::success("[FSM] IDLE >> ==== INDEPENDENT ====");
+             transitionTo(&DualArmControl::entryStateIndependent, &DualArmControl::stateIndependent);
+       }
+}
+// =========================================================================
+// STATO 2: INDEPENDENT (Raggiungimento Waypoint Singoli con Rotazione)
+// =========================================================================
+void DualArmControl::entryStateIndependent(){
+       currentFsmState_ = FSMState::INDEPENDENT;
+       mc_rtc::log::info("[FSM] Entering INDEPENDENT Phase with 90-degree target rotation.");
+       // 0. Tasks allocation
+              solver().addTask(leftEeTask_);
+              solver().addTask(rightEeTask_);
+       // 1. Cattura gli orientamenti correnti prima della transizione
+              Eigen::Matrix3d R_left_start = robots().robot(leftRobotIndex_).bodyPosW(eeName_).rotation();
+              Eigen::Matrix3d R_right_start = robots().robot(rightRobotIndex_).bodyPosW(eeName_).rotation();
+       // 2. Ruota di 90 gradi attorno all'asse Z relativo
+              Eigen::Matrix3d R_rot_90           = sva::RotX(M_PI / 2.0);
+              Eigen::Matrix3d R_left_target      = R_rot_90 * R_left_start;
+              Eigen::Matrix3d R_right_target     = R_rot_90.transpose() * R_right_start;
+       // 3. Crea i frame spaziali completi (Posizione + Rotazione)
+              X_0_leftTarget = sva::PTransformd(R_left_target, Eigen::Vector3d(0.50, 0.10, 0.08));
+              X_0_rightTarget = sva::PTransformd(R_right_target, Eigen::Vector3d(0.50, 0.40, 0.08));
+       // 4. Invia i comandi contemporanei al solutore cinematico
+              leftEeTask_->set_ef_pose(X_0_leftTarget);
+              rightEeTask_->set_ef_pose(X_0_rightTarget);
+}
+void DualArmControl::stateIndependent(){
+       // Criteri di convergenza sia cartesiana che di velocità angolare/lineare
+              const bool leftConverged = leftEeTask_  ->eval().norm() < 0.03 && leftEeTask_ ->speed().norm() < 0.005;
+              const bool rightConverged = rightEeTask_->eval().norm() < 0.03 && rightEeTask_->speed().norm() < 0.005;
+       // SWITCH
+              if (leftConverged && rightConverged){
+                     mc_rtc::log::success("[FSM] REACHING PHASE COMPLETED. MOVING TO >> ==== COLLABORATIVE ====");
+                     solver().removeTask(leftEeTask_);
+                     solver().removeTask(rightEeTask_);
+                     transitionTo(&DualArmControl::entryStateCollaborative, &DualArmControl::stateCollaborative);
+              }
+}
+// =========================================================================
+// STATO 3: COLLABORATIVE 
+// =========================================================================
+
+
+
+void DualArmControl::entryStateCollaborative(){
+       currentFsmState_ = FSMState::COLLABORATIVE;
+       mc_rtc::log::info("[FSM] Entering COLLABORATIVE Phase (Single Unified Smooth Trajectory).");
+       collabSubState_ = CollabSubState::BUILD_GRASP;
+       stateTimer_ = 0;
+
+       leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
+       rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
+       // Attiviamo i task di impedenza nel solutore QP
+       gains.springGains << 10.0, 10.0, 10.0, 40.0, 40.0, 2.0;
+       gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0;
+       
+       setImpedanceGains(gains.springGains, gains.springGains, gains.wrenchGains, 4);
+       solver().addTask(leftImpedanceTask_);
+       solver().addTask(rightImpedanceTask_);
+       rampTime = 8.0; 
+       lambdaStart = 0;
+
+       spd(5) = 0.01;
+       speedLeftConstr_->addBoundedSpeed(solver(),eeName_,Eigen::Vector3d::Zero(),dof,-spd,spd);
+       speedRightConstr_->addBoundedSpeed(solver(),eeName_,Eigen::Vector3d::Zero(),dof,-spd,spd);
+       solver().addConstraintSet(speedLeftConstr_);
+       solver().addConstraintSet(speedRightConstr_);
+       
+
+}
+void DualArmControl::stateCollaborative(){
+       // Incrementiamo il timer interno ad ogni loop
+       
+       switch (collabSubState_){
+              case CollabSubState::BUILD_GRASP:{   
+              stateTimer_ += timeStep;           
+
+
+              double mLeft  = computeReflectedMassZ(leftRobotIndex_, eeName_);
+              double mRight = computeReflectedMassZ(rightRobotIndex_, eeName_);
+
+              double m_reflected_z = std::min(mLeft,mRight);
+
+              double r = 0.3; // rapporto massa virtuale/massa riflessa, <1 per garanzia anti-rimbalzo
+              double M_virtual_z = r * m_reflected_z;
+              gains.massGains(5) = M_virtual_z;   
+
+              Eigen::Vector6d damper  = 2.0 * 3 * gains.springGains.cwiseProduct(gains.massGains).cwiseSqrt();
+
+                     forBothImpedanceTasks([&](auto &task){
+                            task->gains().mass().vec(gains.massGains);
+                            task->gains().damper().vec(damper);
+                     }); 
+
+              const double contactThreshold = 1.7;
+
+              double delta_z = spd(5) * timeStep;
+
+              forBothImpedanceTasks([&](auto &task) {
+              // Otteniamo la posa target attuale
+              sva::PTransformd targetPose = task->targetPose();
+              // Creiamo una trasformazione di sola traslazione lungo l'asse Z locale
+              sva::PTransformd localShift(Eigen::Vector3d(0.0, 0.0, delta_z));
+              // Moltiplicando a sinistra (nella convenzione SpaceVecAlg), 
+              // applichiamo lo spostamento nel frame locale dell'end-effector
+              task->targetPose(localShift * targetPose);
+              });
+
+              sva::ForceVecd FL = leftImpedanceTask_->measuredWrench();
+              sva::ForceVecd FR = rightImpedanceTask_->measuredWrench();
+              //double force = gains.contactForce(stateTimer_);
+              //leftImpedanceTask_ -> targetWrench(sva::ForceVecd(Eigen::Vector3d::Zero(),Eigen::Vector3d(0.0, 0.0, force)));
+              //rightImpedanceTask_-> targetWrench(sva::ForceVecd(Eigen::Vector3d::Zero(),Eigen::Vector3d(0.0, 0.0, force)));
+
+
+              if(FL.force().norm() > contactThreshold && FR.force().norm() > contactThreshold){
+                     mc_rtc::log::success("[FSM] Contact established.");
+                     mc_rtc::log::info("FL = {:.2f}, FR = {:.2f}",FL.force().norm(),FR.force().norm());
+                     // Blocca la posa attuale dei due end-effector                     
+                     leftImpedanceTask_->targetPose(robots().robot(leftRobotIndex_).bodyPosW(eeName_));
+                     rightImpedanceTask_->targetPose(robots().robot(rightRobotIndex_).bodyPosW(eeName_));
+                     stateTimer_ = 0;
+                     collabSubState_ = CollabSubState::TRAJECTORY;
+              }
+              break;
+              }
+              case CollabSubState::TRAJECTORY:{   
+                     auto grasp = buildGraspFrame();
+                     x_0_objectCurrent_ = grasp.object;
+                     x_0_objectStart_ = grasp.object;
+
+                     leftOffset_ = grasp.leftOffset;
+                     rightOffset_ = grasp.rightOffset; 
+                     
+                     solver().removeConstraintSet(speedLeftConstr_);
+                     solver().removeConstraintSet(speedRightConstr_);
+                     currentInternalForce();
+                     lambdaStart = lambdaMeasured_;
+
+
+                     double roll  = M_PI/2; double pitch = 0.0; double yaw   = 0.0;
+
+                     Eigen::Matrix3d R_mondo_desiderata = (
+                            Eigen::AngleAxisd(yaw,   Eigen::Vector3d::UnitZ()) *
+                            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+                            Eigen::AngleAxisd(roll,  Eigen::Vector3d::UnitX())
+                     ).toRotationMatrix();
+
+                     //x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(R*R_mondo_desiderata), x_0_objectStart_.translation());
+                     x_0_objectWaypoint1_ = sva::PTransformd(Eigen::Quaterniond(x_0_objectStart_.rotation()),Eigen::Vector3d(0.50, 0.0, 0.08));
+                     gains.collaborativeTime_ = 0.0;                  
+                     // Passiamo al movimento cooperativo vero e proprio
+                     mc_rtc::log::info("[FSM - Collaborative] >> ===== STARTING MOVEMENTS ====");
+
+                     collabSubState_ = CollabSubState::COOPERATIVE_MOTION;
+              break;
+              }
+              case CollabSubState::COOPERATIVE_MOTION:{   
+                     stateTimer_ += timeStep;
+
+                     double tau = std::clamp(stateTimer_ / rampTime, 0.0, 1.0);
+
+                     double s = 10*pow(tau,3)
+                            -15*pow(tau,4)
+                            + 6*pow(tau,5);
+                     
+                     gains.lambda_desired = lambdaStart + (30.0 - lambdaStart) * s;
+                     stateTimer_ += timeStep;
+                     gains.springGains << 10.0, 10.0, 10.0, 30.0, 30.0, 15.0;
+                     gains.massGains = Eigen::Vector6d::Constant(1);
+                     gains.damperGains =  2.0 * gains.springGains.cwiseProduct(gains.massGains).cwiseSqrt();
+                     gains.wrenchGains << 0.0, 0.0, 0.0,  0.0,  0.0,  0.004;           
+                     forBothImpedanceTasks([&](auto &task){
+                            task->gains().mass().vec(gains.massGains);
+                            task->gains().spring().vec(gains.springGains);
+                            task->gains().damper().vec(gains.damperGains);
+                            task->gains().wrench().vec(gains.wrenchGains); 
+                     });  
+                     updateContactForces();
+                     if (std::abs(gains.lambda_desired - lambdaMeasured_) < 2){
+                            gains.collaborativeTime_ += timeStep;
+                     }
+                     x_0_objectCurrent_ = computeDesiredObjectPose();
+
+                     // Converte la posa dell'oggetto nelle pose dei singoli end-effector usando gli offset registrati al contatto.
+                     // Se l'HOLD è attivo, mc_rtc userà queste pose solo come direzione di movimento, mantenendo intatta 
+                     // la compressione iniziale senza generare forze di fuga asimmetriche.
+                     leftImpedanceTask_->targetPose(leftOffset_ * x_0_objectCurrent_ );
+                     rightImpedanceTask_->targetPose(rightOffset_ * x_0_objectCurrent_);
+
+              break;
+              }
+       }
+}
+
+bool DualArmControl::run(){
+       (this->*currentState_)();
+       return mc_control::MCController::run();
+}
+CONTROLLER_CONSTRUCTOR("DualArmControl", DualArmControl)

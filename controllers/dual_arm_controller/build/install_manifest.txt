@@ -1,0 +1,9 @@
+/home/vscode/workspace/install/lib/mc_controller/etc/DualArmControl.yaml
+/home/vscode/workspace/install/lib/mc_controller/DualArmControl.so
+/home/vscode/workspace/install/lib/mc_robots/my_box.so
+/usr/local/share/my_box/urdf/my_box.urdf
+/usr/local/share/my_box/meshes/box/my_box.stl
+/usr/local/share/my_box/convex/box/my_box.txt
+/usr/local/share/my_box/rsdf/box/my_box.rsdf
+/usr/local/share/my_box/my_box.xml
+/usr/local/share/mc_mujoco/my_box.yaml

@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/vscode/workspace/sandbox/controllers/custom_task_test/build/cmake_install.cmake",
+		"/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,0 +1,15 @@
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/test.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/edit_cache.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/rebuild_cache.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/list_install_components.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/install.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/install/local.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/CMakeFiles/install/strip.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/CustomTask.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/test.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/edit_cache.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/rebuild_cache.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/list_install_components.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/install.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/install/local.dir
+/home/vscode/workspace/sandbox/controllers/custom_task_test/build/src/CMakeFiles/install/strip.dir
